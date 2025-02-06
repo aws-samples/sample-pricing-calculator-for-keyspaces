@@ -145,7 +145,7 @@ function MultiRegionForm({
           >
             <InputField
               key="averageReadRequestsPerSecond"
-              fieldKey="averageReadRequestsperSecond"
+              fieldKey="averageReadRequestsPerSecond"
               value={formData[region.value]?.averageReadRequestsPerSecond || 0}
               handleInputChange={(e) => handleInputChange(e, region.value)}
               regionKey={region.value}
