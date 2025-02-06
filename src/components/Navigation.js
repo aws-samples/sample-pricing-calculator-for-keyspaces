@@ -38,7 +38,7 @@ function Navigation({ activeHref, onFollow }) {
         <SideNavigation
             header={{
                 href: '#/',
-                text: 'Amazon Keyspaces (for Apache Cassandra) Pricing Calculator'
+                text: 'Amazon Keyspaces (for Apache Cassandra) pricing calculator'
             }}
             items={navItems}
             activeHref={activeHref}

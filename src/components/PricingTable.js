@@ -14,7 +14,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       (isStrong ? pricing.strongConsistencyReads : pricing.eventualConsistencyReads) +
       (isStrong ? pricing.strongConsistencyWrites : pricing.eventualConsistencyWrites) +
       (isStrong ? pricing.strongConsistencyStorage : pricing.eventualConsistencyStorage) +
-      (formData[selectedRegion].pointInTimeRecovery ? 
+      (formData[selectedRegion].pointInTimeRecoveryPITR ? 
         (isStrong ? pricing.strongConsistencyBackup : pricing.eventualConsistencyBackup) : 0) +
       (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
     );
@@ -96,7 +96,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandStrong: onDemandPricing.strongConsistencyStorage,
       onDemandEventual: onDemandPricing.eventualConsistencyStorage
     },
-    formData[selectedRegion].pointInTimeRecovery && { 
+    formData[selectedRegion].pointInTimeRecoveryPITR && { 
       metric: "Backup Price", 
       provisionedStrong: provisionedPricing.strongConsistencyBackup,
       provisionedEventual: provisionedPricing.eventualConsistencyBackup,
@@ -124,16 +124,16 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     
     // Add title
     doc.setFontSize(16);
-    doc.text('Amazon Keyspaces Pricing Calculator Results', 14, 20);
+    doc.text('Amazon Keyspaces (for Apache Cassandra) pricing calculator results', 14, 20);
     
     // Add timestamp and region information
     const timestamp = new Date().toLocaleString();
     doc.setFontSize(10);
     doc.text(`Generated on: ${timestamp}`, 14, 30);
-    doc.text(`Primary Region: ${selectedRegion}`, 14, 35);
+    doc.text(`Primary region: ${selectedRegion}`, 14, 35);
     
     if (multiSelectedRegions && multiSelectedRegions.length > 0) {
-      doc.text('Additional Regions:', 14, 40);
+      doc.text('Additional regions:', 14, 40);
       multiSelectedRegions.forEach((region, index) => {
         doc.text(`- ${region.value}`, 20, 45 + (index * 5));
       });
@@ -163,9 +163,9 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     ];
 
     // Add backup price row if PITR is enabled
-    if (formData[selectedRegion].pointInTimeRecovery) {
+    if (formData[selectedRegion].pointInTimeRecoveryPITR) {
       tableData.push([
-        'Backup Price',
+        'Point-in-time recovery Price',
         formatPrice(provisionedPricing.strongConsistencyBackup),
         formatPrice(onDemandPricing.strongConsistencyBackup),
         formatPrice(provisionedPricing.eventualConsistencyBackup),
@@ -228,12 +228,12 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
 
     // Add primary region data
     inputData.push(
-      ['Average Read Requests/sec', formData[selectedRegion].averageReadRequests],
-      ['Average Write Requests/sec', formData[selectedRegion].averageWriteRequests],
-      ['Average Row Size (bytes)', formData[selectedRegion].averageRowSizeInBytes],
+      ['Average read requests per second', formData[selectedRegion].averageReadRequestsPerSecond],
+      ['Average write requests per second', formData[selectedRegion].averageWriteRequestsPerSecond],
+      ['Average row size (bytes)', formData[selectedRegion].averageRowSizeInBytes],
       ['Storage (GB)', formData[selectedRegion].storageInGb],
-      ['Point-in-Time Recovery', formData[selectedRegion].pointInTimeRecovery ? 'Enabled' : 'Disabled'],
-      ['TTL Deletes %', formData[selectedRegion].ttlDeletesPerSecond]
+      ['Point-in-Time Recovery (PITR)', formData[selectedRegion].pointInTimeRecoveryPITR ? 'Enabled' : 'Disabled'],
+      ['TTL Deletes per second', formData[selectedRegion].ttlDeletesPerSecond]
     );
 
     // Generate input parameters table for primary region
@@ -262,16 +262,16 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     if (multiSelectedRegions && multiSelectedRegions.length > 0) {
       const additionalStartY = doc.lastAutoTable.finalY + 15;
       doc.setFontSize(12);
-      doc.text('Additional Regions - Read Requests/sec', 14, additionalStartY);
+      doc.text('Additional regions - Read requests per second', 14, additionalStartY);
 
       const additionalData = [
-        ['Region', 'Read Requests/sec']
+        ['Region', 'Read requests per second']
       ];
 
       multiSelectedRegions.forEach(region => {
         additionalData.push([
           region.value,
-          formData[region.value]?.averageReadRequests || '0'
+          formData[region.value]?.averageReadRequestsPerSecond || '0'
         ]);
       });
 
@@ -298,7 +298,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     }
 
     // Save the PDF
-    doc.save('keyspaces-pricing-calculator-results.pdf');
+    doc.save('amazon-keyspaces-pricing-calculator-results.pdf');
   };
 
   return (

@@ -20,11 +20,11 @@ function App() {
     const [expandedRegions, setExpandedRegions] = useState({});
     const [formData, setFormData] = useState({
         [selectedRegion]: {
-            averageReadRequests: 0,
-            averageWriteRequests: 0,
+            averageReadRequestsPerSecond: 0,
+            averageWriteRequestsPerSecond: 0,
             averageRowSizeInBytes: 0,
             storageInGb: 0,
-            pointInTimeRecovery: false,
+            pointInTimeRecoveryPITR: false,
             ttlDeletesPerSecond: 0
         }
     });
@@ -37,11 +37,11 @@ function App() {
         setFormData(prevFormData => {
             const newFormData = { ...prevFormData };
             const defaultData = {
-                averageReadRequests: 0,
-                averageWriteRequests: 0,
+                averageReadRequestsPerSecond: 0,
+                averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointInTimeRecovery: false,
+                pointInTimeRecoveryPITR: false,
                 ttlDeletesPerSecond: 0
             };
     
@@ -140,10 +140,10 @@ function App() {
             const writesPriceMultiplier = isMultiRegion ? 1.25 : 1;
     
             if (regionPricing) {
-                const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequests, regionData.averageRowSizeInBytes, 4);
+                const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);
                 const strongConsistencyReads = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, regionPricing.readRequestPricePerHour);
     
-                const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageWriteRequests, regionData.averageRowSizeInBytes, 1);
+                const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
                 const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour) * writesPriceMultiplier;
     
                 const storagePrice = regionData.storageInGb * regionPricing.storagePricePerGB;

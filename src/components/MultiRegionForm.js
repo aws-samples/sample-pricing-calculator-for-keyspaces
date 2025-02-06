@@ -22,11 +22,11 @@ function MultiRegionForm({
         // Only keep the new region, clear everything else
         return {
             [newRegion]: {
-                averageReadRequests: 0,
-                averageWriteRequests: 0,
+                averageReadRequestsPerSecond: 0,
+                averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointInTimeRecovery: false,
+                pointInTimeRecoveryPITR: false,
                 ttlDeletesPerSecond: 0
             }
         };
@@ -65,12 +65,12 @@ function MultiRegionForm({
             ...prevFormData,
             [regionKey]: {
                 ...prevFormData[selectedRegion], // Copy values from primary region
-                averageReadRequests: name === 'averageReadRequests' ? value : prevFormData[regionKey]?.averageReadRequests,
+                averageReadRequestsPerSecond: name === 'averageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
                 // Force other values to match primary region
-                averageWriteRequests: 0,
+                averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
                 storageInGb: prevFormData[selectedRegion].storageInGb,
-                pointInTimeRecovery: prevFormData[selectedRegion].pointInTimeRecovery,
+                pointInTimeRecoveryPITR: prevFormData[selectedRegion].pointInTimeRecoveryPITR,
                 ttlDeletesPerSecond: prevFormData[selectedRegion].ttlDeletesPerSecond
             }
         }));
@@ -115,7 +115,7 @@ function MultiRegionForm({
             onChange={handleRegionChange}
           />
         </FormField>
-        <FormField label="Replicate to AWS Regions (0-5)">
+        <FormField label="Multi-region Replication. Choose additional regions for active-active replication (0-5)">
           <Multiselect
             placeholder="Select regions"
             options={awsRegions
@@ -144,9 +144,9 @@ function MultiRegionForm({
             onChange={({ detail }) => handleExpandChange(region.value, detail.expanded)}
           >
             <InputField
-              key="averageReadRequests"
-              fieldKey="averageReadRequests"
-              value={formData[region.value]?.averageReadRequests || 0}
+              key="averageReadRequestsPerSecond"
+              fieldKey="averageReadRequestsperSecond"
+              value={formData[region.value]?.averageReadRequestsPerSecond || 0}
               handleInputChange={(e) => handleInputChange(e, region.value)}
               regionKey={region.value}
             />

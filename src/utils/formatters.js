@@ -15,7 +15,10 @@ export const formatLabel = (key) => {
     if (!key) return '';
     const specialTerms = {
         'ttl': 'TTL',
-        'gb': 'GB',
+        'gb': '(GB)',
+        'PITR': '(PITR)',
+        'pitr': '(PITR)',
+        'Pitr': '(PITR)',
         // Add other special terms here
     };
     return key
@@ -27,12 +30,12 @@ export const formatLabel = (key) => {
 
 export const getFieldDescription = (key) => {
     const descriptions = {
-        averageReadRequests: "Enter the average number of read requests per second.",
-        averageWriteRequests: "Enter the average number of write requests per second that your workload needs.",
+        averageReadRequestsPerSecond: "Enter the average number of read requests per second",
+        averageWriteRequestsPerSecond: "Enter the average number of write requests per second that your workload needs.",
         averageRowSizeInBytes: "Enter the average size of a row in bytes.",
         storageInGb: "Enter the amount of storage in GB.",
-        pointInTimeRecovery: "Enable or disable Point-in-Time Recovery.",
-        ttlDeletesPerSecond: "Enter the average number of ttl deletes per second.",
+        pointInTimeRecoveryPITR: "Enable or disable Point-in-Time Recovery.",
+        ttlDeletesPerSecond: "Enter the average number of TTL deletes per second.",
         // Add descriptions for other fields here
     };
     return descriptions[key] || "";
@@ -40,11 +43,11 @@ export const getFieldDescription = (key) => {
 
 export const getFieldInfoContent = (key) => {
     const infoContent = {
-        averageReadRequests: "This helps estimate your read capacity needs. Each read request can read upto 4KB of data.",
-        averageWriteRequests: "This helps estimate your write capacity needs.  Write operations include INSERT, UPDATE, and DELETE operations Each write request can write upto 1KB of data.",
-        averageRowSizeInBytes: "This affects storage and throughput calculations.",
+        averageReadRequestsPerSecond: "This helps estimate your read capacity needs. Each read request can read upto 4KB of data. Read operations include SELECT queries.",
+        averageWriteRequestsPerSecond: "This helps estimate your write capacity needs.  Write operations include INSERT, UPDATE, and DELETE operations Each write request can write upto 1KB of data.",
+        averageRowSizeInBytes: "This helps estimate the number of capacity units used per operation",
         storageInGb: "This determines your storage costs.",
-        pointInTimeRecovery: "Point-in-time recovery (PITR) helps protect your Amazon Keyspaces tables from accidental write or delete operations by providing you continuous backups of your table data. If you enable it, the amount of PITR storage is exactly the same as your total storage.",
+        pointInTimeRecoveryPITR: "Point-in-time recovery (PITR) helps protect your Amazon Keyspaces tables from accidental write or delete operations by providing you continuous backups of your table data. If you enable it, the amount of PITR storage is exactly the same as your total storage.",
         ttlDeletesPerSecond: "DELETE operations triggered by the TTL process which deletes expired data. If you do not plan to enable TTL, use zero for number of delete operations.",
         // Add info content for other fields here
     };
