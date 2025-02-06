@@ -59,7 +59,7 @@ function MultiRegionForm({
             }
         }));
     } else {
-        // For replicated regions, only update averageReadRequests
+        // For replicated regions, only update averageReadRequestsPerSecond
         // and set other values to match primary region
         setFormData(prevFormData => ({
             ...prevFormData,

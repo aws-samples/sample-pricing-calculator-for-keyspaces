@@ -7,8 +7,11 @@ export function getOnDemandCUs(requests, size, cuMultiplier) {
 }
 
 export function calculatePricing(formData, isMultiRegion, currentPricing, selectedRegion, multiSelectedRegions) {
-  const { requests, size, cuMultiplier } = formData;
+  const requests = Number(formData.requests);
+  const size = Number(formData.size);
+  const cuMultiplier = Number(formData.cuMultiplier);
   let totalCost = 0;
+  console.log('formData', formData);
 
   // Calculate provisioned capacity units
   const provisionedCUs = getAvgProvisionedCapacityUnits(requests, size, cuMultiplier);

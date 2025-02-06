@@ -92,6 +92,10 @@ function App() {
     }
 
     function getOnDemandCUs(requests, size, cuMultiplier) {
+        console.log("getOnDemandCUs");
+        console.log(requests);
+        console.log(size);
+        console.log(cuMultiplier);
         return Math.ceil(requests * Math.ceil(size * 1 / (cuMultiplier * 1024))) * 3600 * 24 * 30.41667;
     }
 
@@ -143,14 +147,14 @@ function App() {
                 const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);
                 const strongConsistencyReads = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, regionPricing.readRequestPricePerHour);
     
-                const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
+                const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
                 const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour) * writesPriceMultiplier;
     
                 const storagePrice = regionData.storageInGb * regionPricing.storagePricePerGB;
                 const backupPrice = regionData.storageInGb * regionPricing.pitrPricePerGB;
     
-                const onDemandReadsPrice = getOnDemandCUs(regionData.averageReadRequests, regionData.averageRowSizeInBytes, 4) * regionPricing.readRequestPrice;
-                const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequests, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice * writesPriceMultiplier;
+                const onDemandReadsPrice = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * regionPricing.readRequestPrice;
+                const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice * writesPriceMultiplier;
     
                 const ttlDeletesPrice = getTtlDeletesPrice(regionData.ttlDeletesPerSecond, regionData.averageRowSizeInBytes) * regionPricing.ttlDeletesPrice;
     
