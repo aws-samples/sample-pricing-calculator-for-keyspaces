@@ -1,7 +1,7 @@
 {
   "name": "keyspaces-pricing-calculator",
   "version": "0.1.0",
-  "homepage": "https://aws-samples.github.io/sample-pricing-calculator-for-keyspaces",
+  "homepage": "https://aws-samples.github.io/sample-pricing-calculator-for-keyspaces/docs",
   "private": false,
   "dependencies": {
     "@cloudscape-design/components": "^3.0.782",
