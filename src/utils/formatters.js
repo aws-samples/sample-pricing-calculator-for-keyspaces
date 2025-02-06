@@ -34,7 +34,7 @@ export const getFieldDescription = (key) => {
         averageWriteRequestsPerSecond: "Enter the average number of write requests per second that your workload needs.",
         averageRowSizeInBytes: "Enter the average size of a row in bytes.",
         storageInGb: "Enter the amount of storage in GB.",
-        pointInTimeRecoveryPITR: "Enable or disable Point-in-Time Recovery.",
+        pointIntimeRecovery: "Enable or disable Point-in-Time Recovery.",
         ttlDeletesPerSecond: "Enter the average number of TTL deletes per second.",
         // Add descriptions for other fields here
     };
@@ -47,7 +47,7 @@ export const getFieldInfoContent = (key) => {
         averageWriteRequestsPerSecond: "This helps estimate your write capacity needs.  Write operations include INSERT, UPDATE, and DELETE operations Each write request can write upto 1KB of data.",
         averageRowSizeInBytes: "This helps estimate the number of capacity units used per operation",
         storageInGb: "This determines your storage costs.",
-        pointInTimeRecoveryPITR: "Point-in-time recovery (PITR) helps protect your Amazon Keyspaces tables from accidental write or delete operations by providing you continuous backups of your table data. If you enable it, the amount of PITR storage is exactly the same as your total storage.",
+        pointIntimeRecovery: "Point-in-time recovery (PITR) helps protect your Amazon Keyspaces tables from accidental write or delete operations by providing you continuous backups of your table data. If you enable it, the amount of PITR storage is exactly the same as your total storage.",
         ttlDeletesPerSecond: "DELETE operations triggered by the TTL process which deletes expired data. If you do not plan to enable TTL, use zero for number of delete operations.",
         // Add info content for other fields here
     };

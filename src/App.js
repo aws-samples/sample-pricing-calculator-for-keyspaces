@@ -24,7 +24,7 @@ function App() {
             averageWriteRequestsPerSecond: 0,
             averageRowSizeInBytes: 0,
             storageInGb: 0,
-            pointInTimeRecoveryPITR: false,
+            pointIntimeRecovery: false,
             ttlDeletesPerSecond: 0
         }
     });
@@ -41,7 +41,7 @@ function App() {
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointInTimeRecoveryPITR: false,
+                pointIntimeRecovery: false,
                 ttlDeletesPerSecond: 0
             };
     

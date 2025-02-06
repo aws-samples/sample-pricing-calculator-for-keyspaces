@@ -26,7 +26,7 @@ function MultiRegionForm({
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointInTimeRecoveryPITR: false,
+                pointIntimeRecovery: false,
                 ttlDeletesPerSecond: 0
             }
         };
@@ -70,7 +70,7 @@ function MultiRegionForm({
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
                 storageInGb: prevFormData[selectedRegion].storageInGb,
-                pointInTimeRecoveryPITR: prevFormData[selectedRegion].pointInTimeRecoveryPITR,
+                pointIntimeRecovery: prevFormData[selectedRegion].pointIntimeRecovery,
                 ttlDeletesPerSecond: prevFormData[selectedRegion].ttlDeletesPerSecond
             }
         }));
@@ -115,7 +115,7 @@ function MultiRegionForm({
             onChange={handleRegionChange}
           />
         </FormField>
-        <FormField label="Multi-region Replication. Choose additional regions for active-active replication (0-5)">
+        <FormField label="Choose additional regions for active-active multi-region replication (0-5)">
           <Multiselect
             placeholder="Select regions"
             options={awsRegions
