@@ -15,7 +15,7 @@ function App() {
     const [currentPricing, setCurrentPricing] = useState({});
     const [provisionedPricing, setProvisionedPricing] = useState({});
     const [onDemandPricing, setOnDemandPricing] = useState({});
-    const [selectedRegion, setSelectedRegion] = useState('US East (Ohio)');
+    const [selectedRegion, setSelectedRegion] = useState('US East (N. Virginia)');
     const [multiSelectedRegions, setMultiSelectedRegions] = useState([]);
     const [expandedRegions, setExpandedRegions] = useState({});
     const [formData, setFormData] = useState({
@@ -24,13 +24,13 @@ function App() {
             averageWriteRequestsPerSecond: 0,
             averageRowSizeInBytes: 0,
             storageInGb: 0,
-            pointIntimeRecovery: false,
+            pointInTimeRecovery: false,
             ttlDeletesPerSecond: 0
         }
     });
 
     useEffect(() => {
-        setCurrentPricing(processRegion('US East (Ohio)'));
+        setCurrentPricing(processRegion('US East (N. Virginia)'));
     }, []);
 
     useEffect(() => {
@@ -41,7 +41,7 @@ function App() {
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointIntimeRecovery: false,
+                pointInTimeRecovery: false,
                 ttlDeletesPerSecond: 0
             };
     

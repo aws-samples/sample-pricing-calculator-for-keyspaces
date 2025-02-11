@@ -14,7 +14,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       (isStrong ? pricing.strongConsistencyReads : pricing.eventualConsistencyReads) +
       (isStrong ? pricing.strongConsistencyWrites : pricing.eventualConsistencyWrites) +
       (isStrong ? pricing.strongConsistencyStorage : pricing.eventualConsistencyStorage) +
-      (formData[selectedRegion].pointIntimeRecovery ? 
+      (formData[selectedRegion].pointInTimeRecovery ? 
         (isStrong ? pricing.strongConsistencyBackup : pricing.eventualConsistencyBackup) : 0) +
       (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
     );
@@ -96,7 +96,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandStrong: onDemandPricing.strongConsistencyStorage,
       onDemandEventual: onDemandPricing.eventualConsistencyStorage
     },
-    formData[selectedRegion].pointIntimeRecovery && { 
+    formData[selectedRegion].pointInTimeRecovery && { 
       metric: "Backup Price", 
       provisionedStrong: provisionedPricing.strongConsistencyBackup,
       provisionedEventual: provisionedPricing.eventualConsistencyBackup,
@@ -163,7 +163,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     ];
 
     // Add backup price row if PITR is enabled
-    if (formData[selectedRegion].pointIntimeRecovery) {
+    if (formData[selectedRegion].pointInTimeRecovery) {
       tableData.push([
         'Point-in-time recovery Price',
         formatPrice(provisionedPricing.strongConsistencyBackup),
@@ -232,7 +232,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       ['Average write requests per second', formData[selectedRegion].averageWriteRequestsPerSecond],
       ['Average row size (bytes)', formData[selectedRegion].averageRowSizeInBytes],
       ['Storage (GB)', formData[selectedRegion].storageInGb],
-      ['Point-in-Time Recovery (PITR)', formData[selectedRegion].pointIntimeRecovery ? 'Enabled' : 'Disabled'],
+      ['Point-in-Time Recovery (PITR)', formData[selectedRegion].pointInTimeRecovery ? 'Enabled' : 'Disabled'],
       ['TTL Deletes per second', formData[selectedRegion].ttlDeletesPerSecond]
     );
 

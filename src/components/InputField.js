@@ -19,7 +19,7 @@ const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
         }
     };
 
-    const error = fieldKey !== 'pointIntimeRecovery' ? validateInput(fieldKey, value) : '';
+    const error = fieldKey !== 'pointInTimeRecovery' ? validateInput(fieldKey, value) : '';
 
     return (
         <FormField
@@ -30,7 +30,7 @@ const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
             </span>}
             errorText={error}
         >
-            {fieldKey === 'pointIntimeRecovery' ? (
+            {fieldKey === 'pointInTimeRecovery' ? (
                 <Checkbox
                     checked={value}
                     onChange={(e) => handleInputChange({ detail: { name: fieldKey, type: 'checkbox', checked: e.detail.checked } }, regionKey)}

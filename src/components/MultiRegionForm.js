@@ -26,7 +26,7 @@ function MultiRegionForm({
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: 0,
                 storageInGb: 0,
-                pointIntimeRecovery: false,
+                pointInTimeRecovery: false,
                 ttlDeletesPerSecond: 0
             }
         };
@@ -70,7 +70,7 @@ function MultiRegionForm({
                 averageWriteRequestsPerSecond: 0,
                 averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
                 storageInGb: prevFormData[selectedRegion].storageInGb,
-                pointIntimeRecovery: prevFormData[selectedRegion].pointIntimeRecovery,
+                pointInTimeRecovery: prevFormData[selectedRegion].pointInTimeRecovery,
                 ttlDeletesPerSecond: prevFormData[selectedRegion].ttlDeletesPerSecond
             }
         }));
