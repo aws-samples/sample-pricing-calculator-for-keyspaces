@@ -9,6 +9,7 @@ const InfoIcon = ({ content }) => {
             position="top"
             size="large"
             content={content}
+        
         >
             <Icon
                 name="status-info"

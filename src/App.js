@@ -4,6 +4,7 @@ import Navigation from './components/Navigation';
 import MultiRegionForm from './components/MultiRegionForm';
 import KeyspacesHelpPanel from './components/KeyspacesHelpPanel';
 import pricingDataJson from './data/mcs.json';  // Import the JSON directly
+import './App.css';
 
 import {
     AppLayout,
@@ -20,12 +21,12 @@ function App() {
     const [expandedRegions, setExpandedRegions] = useState({});
     const [formData, setFormData] = useState({
         [selectedRegion]: {
+            averageRowSizeInBytes: 1024,
             averageReadRequestsPerSecond: 0,
             averageWriteRequestsPerSecond: 0,
-            averageRowSizeInBytes: 0,
-            storageInGb: 0,
-            pointInTimeRecovery: false,
-            ttlDeletesPerSecond: 0
+            averageTtlDeletesPerSecond: 0,
+            storageSizeInGb: 0,
+            pointInTimeRecoveryForBackups: false
         }
     });
 
@@ -37,12 +38,13 @@ function App() {
         setFormData(prevFormData => {
             const newFormData = { ...prevFormData };
             const defaultData = {
+                averageRowSizeInBytes: 1024,
                 averageReadRequestsPerSecond: 0,
                 averageWriteRequestsPerSecond: 0,
-                averageRowSizeInBytes: 0,
-                storageInGb: 0,
-                pointInTimeRecovery: false,
-                ttlDeletesPerSecond: 0
+                averageTtlDeletesPerSecond: 0,
+                storageSizeInGb: 0,
+                pointInTimeRecoveryForBackups: false
+                
             };
     
             // Ensure default region always has data
@@ -59,6 +61,9 @@ function App() {
     
             return newFormData;
         });
+        
+        //calculatePricing(formData);
+
     }, [multiSelectedRegions]);
 
     const processRegion = (regionCode) => {
@@ -68,6 +73,7 @@ function App() {
         }
 
         const regionPricing = pricingDataJson.regions[regionCode];
+        
         return {
             readRequestPrice: regionPricing['MCS-ReadUnits'].price,
             writeRequestPrice: regionPricing['MCS-WriteUnits'].price,
@@ -81,14 +87,18 @@ function App() {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-
-        const isMultiRegion = multiSelectedRegions.length > 0;
-        calculatePricing(formData, isMultiRegion);
+ 
+        calculatePricing(formData);
+        
+    };
+    const handleKeyUp = (e) => {
+       
+        calculatePricing(formData);
         
     };
 
     function getAvgProvisionedCapacityUnits(requests, size, cuMultiplier) {
-        return Math.ceil((requests * Math.ceil(size * 1 / (cuMultiplier * 1024))) / 0.80);
+        return Math.ceil((requests * Math.ceil(size * 1 / (cuMultiplier * 1024))));
     }
 
     function getOnDemandCUs(requests, size, cuMultiplier) {
@@ -104,7 +114,7 @@ function App() {
     }
 
     var getTtlDeletesPrice = (ttlDeletesPerDay, averageRowSizeInBytes) => {
-        return (ttlDeletesPerDay * Math.ceil(averageRowSizeInBytes/1024)*365)/12;
+        return (ttlDeletesPerDay * Math.ceil(averageRowSizeInBytes/1024)*60*60*24*365)/12;
     }
 
     const calculatePricing = (formData) => {
@@ -121,6 +131,7 @@ function App() {
         let totalOnDemandWrites = 0;
     
         const regions = [selectedRegion, ...multiSelectedRegions.map(r => r.value)];
+        
         console.log(regions);
         console.log(multiSelectedRegions)
         console.log(selectedRegion)
@@ -134,35 +145,38 @@ function App() {
             if (isMultiRegion) {
                 if (region === 'default') {
                     region = selectedRegion;
-                }
-                regionPricing = processRegion(region);
-            } else {
-                regionPricing = currentPricing;
+                }  
             }
+            regionPricing = processRegion(region);
 
+            console.log("dump")
+            console.log(region);
+            console.log(regionData);
             console.log(regionPricing);
-            const writesPriceMultiplier = isMultiRegion ? 1.25 : 1;
-    
+            
             if (regionPricing) {
+
                 const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);
                 const strongConsistencyReads = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, regionPricing.readRequestPricePerHour);
     
                 const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
-                const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour) * writesPriceMultiplier;
+                const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour);
     
-                const storagePrice = regionData.storageInGb * regionPricing.storagePricePerGB;
-                const backupPrice = regionData.storageInGb * regionPricing.pitrPricePerGB;
+                const storagePrice = regionData.storageSizeInGb * regionPricing.storagePricePerGB;
+                const backupPrice = regionData.storageSizeInGb * regionPricing.pitrPricePerGB;
     
                 const onDemandReadsPrice = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * regionPricing.readRequestPrice;
-                const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice * writesPriceMultiplier;
+                const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice;
     
-                const ttlDeletesPrice = getTtlDeletesPrice(regionData.ttlDeletesPerSecond, regionData.averageRowSizeInBytes) * regionPricing.ttlDeletesPrice;
+                const ttlDeletesPrice = getTtlDeletesPrice(regionData.averageTtlDeletesPerSecond, regionData.averageRowSizeInBytes) * regionPricing.ttlDeletesPrice;
     
                 totalStrongConsistencyReads += strongConsistencyReads;
                 totalEventualConsistencyReads += strongConsistencyReads / 2;
                 totalStrongConsistencyWrites += strongConsistencyWrites;
                 totalEventualConsistencyWrites += strongConsistencyWrites;
+
                 totalStoragePrice += storagePrice;
+                
                 totalBackupPrice += backupPrice;
                 totalTtlDeletesPrice += ttlDeletesPrice;
     
@@ -214,6 +228,7 @@ function App() {
                         formData={formData}
                         setFormData={setFormData}
                         onSubmit={handleSubmit}
+                        onKeyUp={handleKeyUp}
                         expandedRegions={expandedRegions}
                         setExpandedRegions={setExpandedRegions}
                     />

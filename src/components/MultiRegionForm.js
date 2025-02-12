@@ -11,6 +11,7 @@ function MultiRegionForm({
   formData, 
   setFormData, 
   onSubmit,
+  onKeyUp,
   expandedRegions,
   setExpandedRegions
 }) {
@@ -22,12 +23,12 @@ function MultiRegionForm({
         // Only keep the new region, clear everything else
         return {
             [newRegion]: {
-                averageReadRequestsPerSecond: 0,
-                averageWriteRequestsPerSecond: 0,
-                averageRowSizeInBytes: 0,
-                storageInGb: 0,
-                pointInTimeRecovery: false,
-                ttlDeletesPerSecond: 0
+                averageReadRequestsPerSecond:  prevFormData[selectedRegion].averageReadRequestsPerSecond,
+                averageWriteRequestsPerSecond: prevFormData[selectedRegion].averageWriteRequestsPerSecond,
+                averageTtlDeletesPerSecond: prevFormData[selectedRegion].averageTtlDeletesPerSecond,
+                averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
+                storageSizeInGb: prevFormData[selectedRegion].storageSizeInGb,
+                pointInTimeRecoveryForBackups: prevFormData[selectedRegion].pointInTimeRecoveryForBackups
             }
         };
     });
@@ -36,14 +37,20 @@ function MultiRegionForm({
     
     // Clear all multi-selected regions
     setMultiSelectedRegions([]);
+
+    onKeyUp()
   };
 
   const handleMultiRegionChange = ({ detail }) => {
+    
+    console.log('handleMultiRegionChange')
     if (detail.selectedOptions.length <= 5) {
       setMultiSelectedRegions(detail.selectedOptions);
     } else {
       setMultiSelectedRegions(detail.selectedOptions.slice(0, 5));
     }
+    
+    onKeyUp()
   };
 
   const handleInputChange = (event, regionKey) => {
@@ -58,6 +65,26 @@ function MultiRegionForm({
                 [name]: type === 'checkbox' ? checked : value
             }
         }));
+        setFormData(prevFormData => {
+          const updatedFormData = { ...prevFormData };
+      
+          Object.keys(updatedFormData).forEach(regionKey => {
+
+            if (regionKey !== selectedRegion){
+            
+              updatedFormData[regionKey] = {
+              ...updatedFormData[regionKey],
+              averageWriteRequestsPerSecond: prevFormData[selectedRegion].averageWriteRequestsPerSecond,
+              averageTtlDeletesPerSecond: prevFormData[selectedRegion].averageTtlDeletesPerSecond,
+              averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
+              storageSizeInGb: prevFormData[selectedRegion].storageSizeInGb,
+              pointInTimeRecoveryForBackups: prevFormData[selectedRegion].pointInTimeRecoveryForBackups
+            };
+          }
+          });
+      
+          return updatedFormData;
+        });
     } else {
         // For replicated regions, only update averageReadRequestsPerSecond
         // and set other values to match primary region
@@ -67,14 +94,18 @@ function MultiRegionForm({
                 ...prevFormData[selectedRegion], // Copy values from primary region
                 averageReadRequestsPerSecond: name === 'averageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
                 // Force other values to match primary region
-                averageWriteRequestsPerSecond: 0,
+                averageWriteRequestsPerSecond: prevFormData[selectedRegion].averageWriteRequestsPerSecond,
+                averageTtlDeletesPerSecond: prevFormData[selectedRegion].averageTtlDeletesPerSecond,
                 averageRowSizeInBytes: prevFormData[selectedRegion].averageRowSizeInBytes,
-                storageInGb: prevFormData[selectedRegion].storageInGb,
-                pointInTimeRecovery: prevFormData[selectedRegion].pointInTimeRecovery,
-                ttlDeletesPerSecond: prevFormData[selectedRegion].ttlDeletesPerSecond
+                storageSizeInGb: prevFormData[selectedRegion].storageSizeInGb,
+                pointInTimeRecoveryForBackups: prevFormData[selectedRegion].pointInTimeRecoveryForBackups
             }
         }));
+         
+        
     }
+  
+    onKeyUp()
   };
 
   // Memoize the function to update expanded regions
@@ -103,12 +134,13 @@ function MultiRegionForm({
 
   const handleExpandChange = (regionValue, isExpanded) => {
     setExpandedRegions(prev => ({...prev, [regionValue]: isExpanded}));
+    handleInputChange({ detail: { name: 'averageReadRequestsPerSecond', value: formData[selectedRegion].averageReadRequestsPerSecond } }, regionValue);
   };
-
+  
   return (
-    <form onSubmit={onSubmit}>
+    <form onSubmit={onSubmit} onKeyUp={onKeyUp}>
       <SpaceBetween size="l">
-        <FormField label="Primary AWS Region">
+        <FormField label="Choose a region">
           <Select
             options={awsRegions.map(region => ({ value: region, label: region }))}
             selectedOption={{ value: selectedRegion, label: selectedRegion }}
@@ -126,16 +158,22 @@ function MultiRegionForm({
             deselectAriaLabel={option => `Remove ${option.label}`}
           />
         </FormField>
-        <Box variant="h3">Primary Region: {selectedRegion}</Box>
-        {Object.entries(formData[selectedRegion] || {}).map(([key, value]) => (
-          <InputField
-            key={key}
-            fieldKey={key}
-            value={value}
-            handleInputChange={(e) => handleInputChange(e, selectedRegion)}
-            regionKey={selectedRegion}
-          />
-        ))}
+        <ExpandableSection 
+          
+            key={selectedRegion}
+            header={selectedRegion}
+            expanded={true}
+        >
+          {Object.entries(formData[selectedRegion] || {}).map(([key, value]) => (
+            <InputField 
+              key={key}
+              fieldKey={key}
+              value={value}
+              handleInputChange={(e) => handleInputChange(e, selectedRegion)}
+              regionKey={selectedRegion}
+            />
+         ))}
+        </ExpandableSection>
         {multiSelectedRegions.map((region) => (
           <ExpandableSection
             key={region.value}
@@ -143,16 +181,55 @@ function MultiRegionForm({
             expanded={expandedRegions[region.value] || false}
             onChange={({ detail }) => handleExpandChange(region.value, detail.expanded)}
           >
+           
             <InputField
-              key="averageReadRequestsPerSecond"
+              key="multiAverageReadRequestsPerSecond"
               fieldKey="averageReadRequestsPerSecond"
               value={formData[region.value]?.averageReadRequestsPerSecond || 0}
               handleInputChange={(e) => handleInputChange(e, region.value)}
               regionKey={region.value}
             />
+          
+          <ExpandableSection
+             header="Relicated"
+              expanded={true}
+              >
+            <InputField
+              key="multiAverageWriteRequestsPerSecond"
+              fieldKey="multiAverageWriteRequestsPerSecond"
+              value={
+                formData[region.value]?.averageWriteRequestsPerSecond 
+              }
+              regionKey={region.value}
+            />
+            
+            <InputField
+              key="multistorageSizeInGb"
+              fieldKey="multistorageSizeInGb"
+              value={
+                formData[region.value]?.storageSizeInGb 
+              }
+              handleInputChange={(e) => handleInputChange(e, region.value)}
+              readonly={true}
+              regionKey={region.value}
+              disabled={true}
+            />
+            
+            <InputField
+              key="multiaverageTtlDeletesPerSecond"
+              fieldKey="multiaverageTtlDeletesPerSecond"
+              value={
+                formData[region.value]?.averageTtlDeletesPerSecond 
+              }
+              handleInputChange={(e) => handleInputChange(e, region.value)}
+              readonly={true}
+              regionKey={region.value}
+              disabled={true}
+            />
+            </ExpandableSection>
           </ExpandableSection>
         ))}
-        <Button variant="primary" onClick={onSubmit}>Calculate</Button>
+        
       </SpaceBetween>
     </form>
   );

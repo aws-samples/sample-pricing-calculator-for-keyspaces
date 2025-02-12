@@ -14,7 +14,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       (isStrong ? pricing.strongConsistencyReads : pricing.eventualConsistencyReads) +
       (isStrong ? pricing.strongConsistencyWrites : pricing.eventualConsistencyWrites) +
       (isStrong ? pricing.strongConsistencyStorage : pricing.eventualConsistencyStorage) +
-      (formData[selectedRegion].pointInTimeRecovery ? 
+      (formData[selectedRegion].pointInTimeRecoveryForBackups ? 
         (isStrong ? pricing.strongConsistencyBackup : pricing.eventualConsistencyBackup) : 0) +
       (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
     );
@@ -96,7 +96,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandStrong: onDemandPricing.strongConsistencyStorage,
       onDemandEventual: onDemandPricing.eventualConsistencyStorage
     },
-    formData[selectedRegion].pointInTimeRecovery && { 
+    formData[selectedRegion].pointInTimeRecoveryForBackups && { 
       metric: "Backup Price", 
       provisionedStrong: provisionedPricing.strongConsistencyBackup,
       provisionedEventual: provisionedPricing.eventualConsistencyBackup,
@@ -163,7 +163,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     ];
 
     // Add backup price row if PITR is enabled
-    if (formData[selectedRegion].pointInTimeRecovery) {
+    if (formData[selectedRegion].pointInTimeRecoveryForBackups) {
       tableData.push([
         'Point-in-time recovery Price',
         formatPrice(provisionedPricing.strongConsistencyBackup),
@@ -231,9 +231,9 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       ['Average read requests per second', formData[selectedRegion].averageReadRequestsPerSecond],
       ['Average write requests per second', formData[selectedRegion].averageWriteRequestsPerSecond],
       ['Average row size (bytes)', formData[selectedRegion].averageRowSizeInBytes],
-      ['Storage (GB)', formData[selectedRegion].storageInGb],
-      ['Point-in-Time Recovery (PITR)', formData[selectedRegion].pointInTimeRecovery ? 'Enabled' : 'Disabled'],
-      ['TTL Deletes per second', formData[selectedRegion].ttlDeletesPerSecond]
+      ['Storage (GB)', formData[selectedRegion].storageSizeInGb],
+      ['Point-in-Time Recovery (PITR)', formData[selectedRegion].pointInTimeRecoveryForBackups ? 'Enabled' : 'Disabled'],
+      ['TTL Deletes per second', formData[selectedRegion].averageTtlDeletesPerSecond]
     );
 
     // Generate input parameters table for primary region
