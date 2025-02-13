@@ -62,8 +62,6 @@ function App() {
             return newFormData;
         });
         
-        //calculatePricing(formData);
-
     }, [multiSelectedRegions]);
 
     const processRegion = (regionCode) => {
@@ -102,10 +100,6 @@ function App() {
     }
 
     function getOnDemandCUs(requests, size, cuMultiplier) {
-        console.log("getOnDemandCUs");
-        console.log(requests);
-        console.log(size);
-        console.log(cuMultiplier);
         return Math.ceil(requests * Math.ceil(size * 1 / (cuMultiplier * 1024))) * 3600 * 24 * 30.41667;
     }
 
@@ -132,13 +126,7 @@ function App() {
     
         const regions = [selectedRegion, ...multiSelectedRegions.map(r => r.value)];
         
-        console.log(regions);
-        console.log(multiSelectedRegions)
-        console.log(selectedRegion)
-    
         regions.forEach(region => {
-            console.log(formData);
-            console.log(region);
             let regionData = formData[region];
             let regionPricing;
     
@@ -149,11 +137,6 @@ function App() {
             }
             regionPricing = processRegion(region);
 
-            console.log("dump")
-            console.log(region);
-            console.log(regionData);
-            console.log(regionPricing);
-            
             if (regionPricing) {
 
                 const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);

@@ -3,9 +3,9 @@ import { FormField, Input, Checkbox, SpaceBetween } from '@cloudscape-design/com
 import InfoIcon from './InfoIcon';
 import { formatLabel, getFieldDescription, getFieldInfoContent } from '../utils/formatters';
 
-const InputField = ({regionKey, key, fieldKey, value, handleInputChange}) => {
+const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
     const validateInput = (key, value) => {
-        switch (key) {
+        switch (fieldKey) {
             case 'averageTtlDeletesPerSecond':
                 if (!Number.isInteger(+value)) {
                     return 'Please enter an integer';
@@ -36,6 +36,7 @@ const InputField = ({regionKey, key, fieldKey, value, handleInputChange}) => {
                 <Checkbox
                     checked={value}
                     onChange={(e) => handleInputChange({ detail: { name: fieldKey, type: 'checkbox', checked: e.detail.checked } }, regionKey)}
+                    
                 >
                     Enable Point-in-Time Recovery
                 </Checkbox>

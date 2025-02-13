@@ -43,7 +43,6 @@ function MultiRegionForm({
 
   const handleMultiRegionChange = ({ detail }) => {
     
-    console.log('handleMultiRegionChange')
     if (detail.selectedOptions.length <= 5) {
       setMultiSelectedRegions(detail.selectedOptions);
     } else {
@@ -92,7 +91,7 @@ function MultiRegionForm({
             ...prevFormData,
             [regionKey]: {
                 ...prevFormData[selectedRegion], // Copy values from primary region
-                averageReadRequestsPerSecond: name === 'averageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
+                averageReadRequestsPerSecond: name === 'multiAverageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
                 // Force other values to match primary region
                 averageWriteRequestsPerSecond: prevFormData[selectedRegion].averageWriteRequestsPerSecond,
                 averageTtlDeletesPerSecond: prevFormData[selectedRegion].averageTtlDeletesPerSecond,
@@ -134,14 +133,17 @@ function MultiRegionForm({
 
   const handleExpandChange = (regionValue, isExpanded) => {
     setExpandedRegions(prev => ({...prev, [regionValue]: isExpanded}));
-    handleInputChange({ detail: { name: 'averageReadRequestsPerSecond', value: formData[selectedRegion].averageReadRequestsPerSecond } }, regionValue);
+    //handleInputChange({ detail: { name: 'multiAverageReadRequestsPerSecond', value: formData[regionValue].averageReadRequestsPerSecond } }, regionValue);
   };
   
   return (
-    <form onSubmit={onSubmit} onKeyUp={onKeyUp}>
-      <SpaceBetween size="l">
-        <FormField label="Choose a region">
+      
+    <form onSubmit={onSubmit} onKeyUp={onKeyUp} key="inputform">
+      <SpaceBetween direction='vertical' size="xl">
+    
+        <FormField label="Choose a region" key="inputformInner">
           <Select
+            key="regionSelection"
             options={awsRegions.map(region => ({ value: region, label: region }))}
             selectedOption={{ value: selectedRegion, label: selectedRegion }}
             onChange={handleRegionChange}
@@ -149,6 +151,7 @@ function MultiRegionForm({
         </FormField>
         <FormField label="Choose additional regions for active-active multi-region replication (0-5)">
           <Multiselect
+            key="replicaMultiSelect"
             placeholder="Select regions"
             options={awsRegions
               .filter(region => region !== selectedRegion)
@@ -159,11 +162,11 @@ function MultiRegionForm({
           />
         </FormField>
         <ExpandableSection 
-          
-            key={selectedRegion}
             header={selectedRegion}
             expanded={true}
         >
+          <SpaceBetween direction='vertical' size="xl">
+           
           {Object.entries(formData[selectedRegion] || {}).map(([key, value]) => (
             <InputField 
               key={key}
@@ -173,29 +176,35 @@ function MultiRegionForm({
               regionKey={selectedRegion}
             />
          ))}
+         </SpaceBetween>
         </ExpandableSection>
         {multiSelectedRegions.map((region) => (
-          <ExpandableSection
-            key={region.value}
+          <ExpandableSection 
+            key={region.label}
             header={region.label}
             expanded={expandedRegions[region.value] || false}
             onChange={({ detail }) => handleExpandChange(region.value, detail.expanded)}
           >
+            <SpaceBetween direction='vertical' size="xl">
+          
            
             <InputField
               key="multiAverageReadRequestsPerSecond"
-              fieldKey="averageReadRequestsPerSecond"
-              value={formData[region.value]?.averageReadRequestsPerSecond || 0}
+              fieldKey="multiAverageReadRequestsPerSecond"
+              value={formData[region.value]?.averageReadRequestsPerSecond}
               handleInputChange={(e) => handleInputChange(e, region.value)}
               regionKey={region.value}
             />
           
+           
           <ExpandableSection
-             header="Relicated"
+             headerText ="Relicated"
               expanded={true}
+              variant="container"
               >
             <InputField
-              key="multiAverageWriteRequestsPerSecond"
+             key="multiAverageWriteRequestsPerSecond"
+              
               fieldKey="multiAverageWriteRequestsPerSecond"
               value={
                 formData[region.value]?.averageWriteRequestsPerSecond 
@@ -222,16 +231,16 @@ function MultiRegionForm({
                 formData[region.value]?.averageTtlDeletesPerSecond 
               }
               handleInputChange={(e) => handleInputChange(e, region.value)}
-              readonly={true}
               regionKey={region.value}
-              disabled={true}
             />
             </ExpandableSection>
+          </SpaceBetween>
           </ExpandableSection>
         ))}
         
-      </SpaceBetween>
+        </SpaceBetween>
     </form>
+   
   );
 }
 
