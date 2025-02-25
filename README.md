@@ -1,6 +1,9 @@
-# Amazon Keyspaces (for Apache Cassandra) Pricing Calculator
+# Pricing Calculator for Amazon Keyspaces (for Apache Cassandra) 
 
 This application helps you quickly estimate your monthly costs when using **Amazon Keyspaces (for Apache Cassandra)**. By providing basic workload parameters—such as read/write throughput, data size, and TTL delete rates—you can view an approximate cost breakdown for **Provisioned** and **On-Demand** capacity modes.
+
+
+Try the calculator: [Pricing calculator for Amazon Keyspaces](https://aws-samples.github.io/sample-pricing-calculator-for-keyspaces/)
 
 ## Table of Contents
 1. [Features](#features)  
