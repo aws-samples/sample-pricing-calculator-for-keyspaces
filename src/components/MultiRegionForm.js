@@ -91,7 +91,7 @@ function MultiRegionForm({
             ...prevFormData,
             [regionKey]: {
                 ...prevFormData[selectedRegion], // Copy values from primary region
-                averageReadRequestsPerSecond: name === 'multiAverageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
+                averageReadRequestsPerSecond: name === 'multiaverageReadRequestsPerSecond' ? value : prevFormData[regionKey]?.averageReadRequestsPerSecond,
                 // Force other values to match primary region
                 averageWriteRequestsPerSecond: prevFormData[selectedRegion].averageWriteRequestsPerSecond,
                 averageTtlDeletesPerSecond: prevFormData[selectedRegion].averageTtlDeletesPerSecond,
@@ -141,7 +141,7 @@ function MultiRegionForm({
     <form onSubmit={onSubmit} onKeyUp={onKeyUp} key="inputform">
       <SpaceBetween direction='vertical' size="xl">
     
-        <FormField label="Choose a region" key="inputformInner">
+        <FormField label="Choose an AWS Region" key="inputformInner">
           <Select
             key="regionSelection"
             options={awsRegions.map(region => ({ value: region, label: region }))}
@@ -149,7 +149,7 @@ function MultiRegionForm({
             onChange={handleRegionChange}
           />
         </FormField>
-        <FormField label="Choose additional regions for active-active multi-region replication (0-5)">
+        <FormField label="Choose additional Regions for active-active Multi-Region replication (0-5)">
           <Multiselect
             key="replicaMultiSelect"
             placeholder="Select regions"
@@ -189,8 +189,8 @@ function MultiRegionForm({
           
            
             <InputField
-              key="multiAverageReadRequestsPerSecond"
-              fieldKey="multiAverageReadRequestsPerSecond"
+              key="multiaverageReadRequestsPerSecond"
+              fieldKey="multiaverageReadRequestsPerSecond"
               value={formData[region.value]?.averageReadRequestsPerSecond}
               handleInputChange={(e) => handleInputChange(e, region.value)}
               regionKey={region.value}
@@ -203,9 +203,9 @@ function MultiRegionForm({
               variant="container"
               >
             <InputField
-             key="multiAverageWriteRequestsPerSecond"
+             key="multiaverageWriteRequestsPerSecond"
               
-              fieldKey="multiAverageWriteRequestsPerSecond"
+              fieldKey="multiaverageWriteRequestsPerSecond"
               value={
                 formData[region.value]?.averageWriteRequestsPerSecond 
               }

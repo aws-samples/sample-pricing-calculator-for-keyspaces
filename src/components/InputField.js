@@ -24,6 +24,7 @@ const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
     return (
        
         <FormField 
+            
             label={formatLabel(fieldKey)}
              description={<span>
                     {getFieldDescription(fieldKey)} 
@@ -49,7 +50,7 @@ const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
                   >    Enable Point-in-Time Recovery
                 </Checkbox>
             ) :
-            fieldKey === 'multiAverageWriteRequestsPerSecond' || fieldKey === 'multistorageSizeInGb'
+            fieldKey === 'multiaverageWriteRequestsPerSecond' || fieldKey === 'multistorageSizeInGb'
             || fieldKey === 'multiaverageTtlDeletesPerSecond' ? (
                 <Input
                     type="number"
@@ -63,6 +64,9 @@ const InputField = ({regionKey, fieldKey, value, handleInputChange}) => {
                     value={value}
                     onChange={(e) => handleInputChange({ detail: { ...e.detail, name: fieldKey } }, regionKey)}
                     invalid={!!error}
+                    inputMode="numeric"
+                    pattern="^[0-9]*$"
+                    
                 />
             )}
         </FormField>

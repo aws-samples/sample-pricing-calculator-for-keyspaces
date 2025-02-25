@@ -111,7 +111,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandEventual: onDemandPricing.eventualConsistencyTtlDeletesPrice
     },
     { 
-      metric: "Total", 
+      metric: "Monthly total", 
       provisionedStrong: calculateTotal(provisionedPricing, 'strong'),
       provisionedEventual: calculateTotal(provisionedPricing, 'eventual'),
       onDemandStrong: calculateTotal(onDemandPricing, 'strong'),
