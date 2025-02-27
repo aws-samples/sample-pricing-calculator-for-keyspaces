@@ -96,7 +96,7 @@ function App() {
     };
 
     function getAvgProvisionedCapacityUnits(requests, size, cuMultiplier) {
-        return Math.ceil((requests * Math.ceil(size * 1 / (cuMultiplier * 1024))));
+        return Math.ceil((requests * Math.ceil(size * 1 / (cuMultiplier * 1024)))/.70);
     }
 
     function getOnDemandCUs(requests, size, cuMultiplier) {

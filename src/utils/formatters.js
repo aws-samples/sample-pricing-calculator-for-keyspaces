@@ -65,8 +65,8 @@ export const getFieldInfoContent = (key) => {
       "TTL delete operations remove expired data automatically. TTL pricing is based on TTL operations metered in units of TTL deletes. One TTL delete is consumed per KB of data per row that is deleted or updated. For example, to update a row that stores 2.5 KB of data and delete one or more columns within the row at the same time requires 3 TTL deletes. Or, to delete an entire row that contains 3.5 KB of data, Amazon Keyspaces requires 4 TTL deletes. You see TTL delete charge per Region where the row is replicated.",
 
     multiaverageReadRequestsPerSecond: 
-      "This read-only field shows the number of writes performed in this region. Writes in any region replicate to all regions. To modify the number of writes, use the 'Average Write Requests Per Second' field. For example, if Region A has 100 writes/second and Region B has 200 writes/second, enter 300 in the 'Average Write Requests Per Second' field.",
-
+    "Estimate the average read operations per second that occur in this Region. Different Regions may have different read rates. In Apache Cassandra and Amazon Keyspaces, read request are SELECT queries.",
+    
     multiaverageWriteRequestsPerSecond: 
       "Estimate the average read operations per second that occur in this Region. Different Regions can have different read rates. In Apache Cassandra and Amazon Keyspaces, read request are SELECT queries.",
     
