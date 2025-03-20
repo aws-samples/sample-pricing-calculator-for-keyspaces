@@ -43,11 +43,7 @@ function MultiRegionForm({
 
   const handleMultiRegionChange = ({ detail }) => {
     
-    if (detail.selectedOptions.length <= 5) {
-      setMultiSelectedRegions(detail.selectedOptions);
-    } else {
-      setMultiSelectedRegions(detail.selectedOptions.slice(0, 5));
-    }
+    setMultiSelectedRegions(detail.selectedOptions);
     
     onKeyUp()
   };
@@ -149,7 +145,7 @@ function MultiRegionForm({
             onChange={handleRegionChange}
           />
         </FormField>
-        <FormField label="Choose additional Regions for active-active Multi-Region replication (0-5)">
+        <FormField label="Choose additional Regions for active-active Multi-Region replication">
           <Multiselect
             key="replicaMultiSelect"
             placeholder="Select regions"
