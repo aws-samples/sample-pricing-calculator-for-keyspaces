@@ -139,25 +139,25 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       });
     }
 
-    // Prepare table data with all pricing information
+    // Prepare table data with grouped pricing information
     const tableData = [
-      ['Metric', 'Provisioned (Strong)', 'On-Demand (Strong)', 'Provisioned (Eventual)', 'On-Demand (Eventual)'],
+      ['Metric', 'Provisioned (Strong)', 'Provisioned (Eventual)', 'On-Demand (Strong)', 'On-Demand (Eventual)'],
       ['Read Request Units', 
         formatPrice(provisionedPricing.strongConsistencyReads),
-        formatPrice(onDemandPricing.strongConsistencyReads),
         formatPrice(provisionedPricing.eventualConsistencyReads),
+        formatPrice(onDemandPricing.strongConsistencyReads),
         formatPrice(onDemandPricing.eventualConsistencyReads)
       ],
       ['Write Request Units',
         formatPrice(provisionedPricing.strongConsistencyWrites),
-        formatPrice(onDemandPricing.strongConsistencyWrites),
         formatPrice(provisionedPricing.eventualConsistencyWrites),
+        formatPrice(onDemandPricing.strongConsistencyWrites),
         formatPrice(onDemandPricing.eventualConsistencyWrites)
       ],
       ['Storage Price',
         formatPrice(provisionedPricing.strongConsistencyStorage),
-        formatPrice(onDemandPricing.strongConsistencyStorage),
         formatPrice(provisionedPricing.eventualConsistencyStorage),
+        formatPrice(onDemandPricing.strongConsistencyStorage),
         formatPrice(onDemandPricing.eventualConsistencyStorage)
       ]
     ];
@@ -167,8 +167,8 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       tableData.push([
         'Point-in-time recovery Price',
         formatPrice(provisionedPricing.strongConsistencyBackup),
-        formatPrice(onDemandPricing.strongConsistencyBackup),
         formatPrice(provisionedPricing.eventualConsistencyBackup),
+        formatPrice(onDemandPricing.strongConsistencyBackup),
         formatPrice(onDemandPricing.eventualConsistencyBackup)
       ]);
     }
@@ -177,8 +177,8 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     tableData.push([
       'TTL Deletes Price',
       formatPrice(provisionedPricing.strongConsistencyTtlDeletesPrice),
-      formatPrice(onDemandPricing.strongConsistencyTtlDeletesPrice),
       formatPrice(provisionedPricing.eventualConsistencyTtlDeletesPrice),
+      formatPrice(onDemandPricing.strongConsistencyTtlDeletesPrice),
       formatPrice(onDemandPricing.eventualConsistencyTtlDeletesPrice)
     ]);
 
@@ -186,8 +186,8 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     tableData.push([
       'Total',
       formatPrice(calculateTotal(provisionedPricing, 'strong')),
-      formatPrice(calculateTotal(onDemandPricing, 'strong')),
       formatPrice(calculateTotal(provisionedPricing, 'eventual')),
+      formatPrice(calculateTotal(onDemandPricing, 'strong')),
       formatPrice(calculateTotal(onDemandPricing, 'eventual'))
     ]);
 
@@ -213,6 +213,13 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       },
       alternateRowStyles: {
         fillColor: [249, 249, 249]
+      },
+      columnStyles: {
+        0: { cellWidth: 60 },
+        1: { cellWidth: 40 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 40 },
+        4: { cellWidth: 40 }
       }
     });
 

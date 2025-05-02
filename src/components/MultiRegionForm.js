@@ -42,10 +42,11 @@ function MultiRegionForm({
   };
 
   const handleMultiRegionChange = ({ detail }) => {
-    
+    // First update the selected regions
     setMultiSelectedRegions(detail.selectedOptions);
     
-    onKeyUp()
+    // Then trigger the pricing calculation
+    onKeyUp();
   };
 
   const handleInputChange = (event, regionKey) => {
