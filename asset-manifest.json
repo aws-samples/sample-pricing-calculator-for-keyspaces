@@ -1,14 +1,14 @@
 {
   "files": {
     "main.css": "/sample-pricing-calculator-for-keyspaces/static/css/main.ec5c10fd.css",
-    "main.js": "/sample-pricing-calculator-for-keyspaces/static/js/main.412925bc.js",
+    "main.js": "/sample-pricing-calculator-for-keyspaces/static/js/main.90afad15.js",
     "static/js/498.4741aa50.chunk.js": "/sample-pricing-calculator-for-keyspaces/static/js/498.4741aa50.chunk.js",
     "static/js/703.97cc1946.chunk.js": "/sample-pricing-calculator-for-keyspaces/static/js/703.97cc1946.chunk.js",
     "static/js/379.c7efb7a1.chunk.js": "/sample-pricing-calculator-for-keyspaces/static/js/379.c7efb7a1.chunk.js",
     "static/js/787.05e7aa11.chunk.js": "/sample-pricing-calculator-for-keyspaces/static/js/787.05e7aa11.chunk.js",
     "index.html": "/sample-pricing-calculator-for-keyspaces/index.html",
     "main.ec5c10fd.css.map": "/sample-pricing-calculator-for-keyspaces/static/css/main.ec5c10fd.css.map",
-    "main.412925bc.js.map": "/sample-pricing-calculator-for-keyspaces/static/js/main.412925bc.js.map",
+    "main.90afad15.js.map": "/sample-pricing-calculator-for-keyspaces/static/js/main.90afad15.js.map",
     "498.4741aa50.chunk.js.map": "/sample-pricing-calculator-for-keyspaces/static/js/498.4741aa50.chunk.js.map",
     "703.97cc1946.chunk.js.map": "/sample-pricing-calculator-for-keyspaces/static/js/703.97cc1946.chunk.js.map",
     "379.c7efb7a1.chunk.js.map": "/sample-pricing-calculator-for-keyspaces/static/js/379.c7efb7a1.chunk.js.map",
@@ -16,6 +16,6 @@
   },
   "entrypoints": [
     "static/css/main.ec5c10fd.css",
-    "static/js/main.412925bc.js"
+    "static/js/main.90afad15.js"
   ]
 }
