@@ -231,11 +231,16 @@ def _read_input(path: str) -> List[str]:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 _UNIT_TO_GIB = {
-    "kib": 1 / (1024 * 1024),
+    "kib": 1 / (1024**2),
+    "kb":  1 / (1024**2),   # NEW
     "mib": 1 / 1024,
+    "mb":  1 / 1024,        # NEW
     "gib": 1,
+    "gb":  1,               # NEW
     "tib": 1024,
-    "pib": 1024 * 1024,
+    "tb":  1024,            # NEW
+    "pib": 1024**2,
+    "pb":  1024**2,         # NEW
 }
 
 
@@ -244,14 +249,12 @@ def _load_to_gib(text: str) -> float:
     return float(num) * _UNIT_TO_GIB[unit.lower()]
 
 
-# Regex: grab IP, Load (any unit), and the 36-char UUID hostid
 _NODE_RE = re.compile(
-    r"""
-    ^\s*[UD][NLJMRS\*]?          # UN / DN / UL … (status+state) ─ ignored
-    \s+(?P<ip>\d+\.\d+\.\d+\.\d+)
-    \s+(?P<load>\d+(?:\.\d+)?\s+[kmgpt]iB)
-    .*?                          # tokens/owns columns – skip non-greedily
-    (?P<hostid>[0-9a-fA-F\-]{36})
+    r"""^\s*[UD][NLJMRS\*]?
+        \s+(?P<ip>\d+\.\d+\.\d+\.\d+)
+        \s+(?P<load>\d+(?:\.\d+)?\s+[kmgpt]i?B)  # “i” is now optional
+        .*?                                     # skip columns
+        (?P<hostid>[0-9a-fA-F\-]{36})
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -588,11 +591,12 @@ def main():
     row_size_data = parse_row_size_info(row_size_lines)
 
     status_data = parse_nodetool_status(status_lines)
-
+    print(status_data)
     number_of_nodes = 0
     if status_data['datacenters']:
         # Get the first datacenter's node count from the dictionary
         first_dc = next(iter(status_data['datacenters'].values()))
+        print(first_dc)
         number_of_nodes = first_dc['node_count']
 
     if(args.number_of_nodes > 0):

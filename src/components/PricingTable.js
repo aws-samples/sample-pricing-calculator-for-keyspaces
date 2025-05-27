@@ -216,10 +216,10 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       },
       columnStyles: {
         0: { cellWidth: 60 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 40 },
-        4: { cellWidth: 40 }
+        1: { cellWidth: 30 },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 30 },
+        4: { cellWidth: 30 }
       }
     });
 
