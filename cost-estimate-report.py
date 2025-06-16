@@ -306,11 +306,81 @@ def parse_nodetool_status(lines: List[str]) -> Dict:
     return {"datacenter_count": len(dc_map), "datacenters": dc_map}
 
 
-def print_data(report_name, data, uptime_sec, row_size_data, status_data, number_of_nodes=Decimal(1), filter_keyspace=None):
+def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1), filter_keyspace=None):
     """
-    Print the requested output using tabulate for better table formatting.
+    Calculate totals and build a hierarchical data structure.
+    Returns a dictionary with the following structure:
+    {
+        'system_keyspaces': set(),
+        'cluster': {
+            'system': {
+                'compressed_bytes': Decimal,
+                'uncompressed_bytes': Decimal,
+                'writes_units': Decimal,
+                'read_units': Decimal,
+                'ttl_units': Decimal,
+                'network_traffic_gb': Decimal,
+                'network_repair_gb': Decimal
+            },
+            'user': {
+                'compressed_bytes': Decimal,
+                'uncompressed_bytes': Decimal,
+                'writes_units': Decimal,
+                'read_units': Decimal,
+                'ttl_units': Decimal,
+                'network_traffic_gb': Decimal,
+                'network_repair_gb': Decimal
+            }
+        },
+        'keyspaces': {
+            'keyspace_name': {
+                'type': 'system' or 'user',
+                'compressed_bytes': Decimal,
+                'uncompressed_bytes': Decimal,
+                'writes_units': Decimal,
+                'read_units': Decimal,
+                'ttl_units': Decimal,
+                'network_traffic_gb': Decimal,
+                'network_repair_gb': Decimal,
+                'tables': {
+                    'table_name': {
+                        'compressed_bytes': Decimal,
+                        'uncompressed_bytes': Decimal,
+                        'ratio': Decimal,
+                        'writes_units': Decimal,
+                        'read_units': Decimal,
+                        'ttl_units': Decimal,
+                        'row_size_bytes': Decimal,
+                        'network_traffic_gb': Decimal,
+                        'network_repair_gb': Decimal
+                    }
+                }
+            }
+        },
+        'stats': {
+            'total_user_tables': Decimal,
+            'uptime_seconds': Decimal,
+            'number_of_nodes_per_dc': Decimal,
+            'tables_without_writes': {
+                'uncompressed_bytes': Decimal,
+                'read_units': Decimal
+            },
+            'tables_without_reads': {
+                'uncompressed_bytes': Decimal,
+                'writes_units': Decimal,
+                'ttl_units': Decimal
+            },
+            'tables_without_writes_and_reads': {
+                'uncompressed_bytes': Decimal
+            },
+            'monthly_network': {
+                'traffic_gb': Decimal,
+                'repair_gb': Decimal,
+                'gossip_gb': Decimal
+            }
+        }
+    }
     """
-    # Define a set of system keyspaces that we want to sum separately from application tables
     system_keyspaces = {
         'OpsCenter', 'dse_insights_local', 'solr_admin',
         'dse_system', 'HiveMetaStore', 'system_auth',
@@ -320,67 +390,77 @@ def print_data(report_name, data, uptime_sec, row_size_data, status_data, number
         'dse_leases', 'system_distributed_everywhere', 'reaper_db'
     }
 
-    # Initialize counters for system keyspaces
-    total_system_compressed = Decimal(0)
-    total_system_uncompressed = Decimal(0)
-    total_system_writes = Decimal(0)
-    total_system_reads = Decimal(0)
+    result = {
+        'system_keyspaces': system_keyspaces,
+        'cluster': {
+            'system': {
+                'compressed_bytes': Decimal(0),
+                'uncompressed_bytes': Decimal(0),
+                'writes_units': Decimal(0),
+                'read_units': Decimal(0),
+                'ttl_units': Decimal(0),
+                'network_traffic_gb': Decimal(0),
+                'network_repair_gb': Decimal(0)
+            },
+            'user': {
+                'compressed_bytes': Decimal(0),
+                'uncompressed_bytes': Decimal(0),
+                'writes_units': Decimal(0),
+                'read_units': Decimal(0),
+                'ttl_units': Decimal(0),
+                'network_traffic_gb': Decimal(0),
+                'network_repair_gb': Decimal(0)
+            }
+        },
+        'keyspaces': {},
+        'stats': {
+            'total_user_tables': Decimal(0),
+            'uptime_seconds': uptime_sec,
+            'number_of_nodes_per_dc': number_of_nodes,
+            'tables_without_writes': {
+                'uncompressed_bytes': Decimal(0),
+                'read_units': Decimal(0)
+            },
+            'tables_without_reads': {
+                'uncompressed_bytes': Decimal(0),
+                'writes_units': Decimal(0),
+                'ttl_units': Decimal(0)
+            },
+            'tables_without_writes_and_reads': {
+                'uncompressed_bytes': Decimal(0)
+            },
+            'monthly_network': {
+                'traffic_gb': Decimal(0),
+                'repair_gb': Decimal(0),
+                'gossip_gb': Decimal(0)
+            }
+        }
+    }
 
-    # Initialize counters for user (non-system) keyspaces
-    total_dev_compressed = Decimal(0)
-    total_dev_uncompressed = Decimal(0)
-    total_dev_writes = Decimal(0)
-    total_dev_reads = Decimal(0)
-    total_dev_ttls = Decimal(0)
-
-    total_user_tables = Decimal(0)
-    total_uncompressed_without_writes_and_reads = Decimal(0)
-    total_uncompressed_without_writes = Decimal(0)
-    total_reads_for_tables_without_writes = Decimal(0)
-    
-    total_uncompressed_without_reads = Decimal(0)
-    total_writes_for_tables_without_reads = Decimal(0)
-    total_ttl_for_tables_without_reads = Decimal(0)
-
-    total_system_network_traffic_bytes = Decimal(0)
-    total_system_network_repair_bytes = Decimal(0)
-    total_dev_network_traffic_bytes = Decimal(0)
-    total_dev_network_repair_bytes = Decimal(0)
-
-    # Determine which keyspaces to print based on filter_keyspace
     keyspaces_to_print = [filter_keyspace] if filter_keyspace else data.keys()
-
-    # Table headers
-    table_headers = [
-        "Keyspace", "Table", "Cassandra Bytes", "Ratio", "Keyspaces Bytes",
-        "Writes Unit p/s", "Reads Unit p/s", "TTL deletes p/s", "Row size bytes",
-        "Cass Network Traffic", "Cass Network Repair"
-    ]
-
-    # List to store all rows
-    all_rows = []
 
     for keyspace in keyspaces_to_print:
         if keyspace not in data or not data[keyspace]:
             continue
 
-        # Counters for the current keyspace
-        keyspace_compressed = Decimal(0)
-        keyspace_uncompressed = Decimal(0)
-        keyspace_writes = Decimal(0)
-        keyspace_reads = Decimal(0)
-        keyspace_ttls = Decimal(0)
-        keyspace_network_traffic_bytes = Decimal(0)
-        keyspace_network_repair_bytes = Decimal(0)
+        keyspace_type = 'system' if keyspace in system_keyspaces else 'user'
+        result['keyspaces'][keyspace] = {
+            'type': keyspace_type,
+            'compressed_bytes': Decimal(0),
+            'uncompressed_bytes': Decimal(0),
+            'writes_units': Decimal(0),
+            'read_units': Decimal(0),
+            'ttl_units': Decimal(0),
+            'network_traffic_gb': Decimal(0),
+            'network_repair_gb': Decimal(0),
+            'tables': {}
+        }
 
         for (table, space_used, ratio, read_count, write_count) in data[keyspace]:
             if ratio <= 0 or isclose(ratio, 0):
                 ratio = Decimal(1)
 
             uncompressed_size = space_used / ratio
-            keyspace_compressed += space_used
-            keyspace_uncompressed += uncompressed_size
-
             fully_qualified_table_name = keyspace + "." + table
 
             if fully_qualified_table_name in row_size_data:
@@ -400,123 +480,177 @@ def print_data(report_name, data, uptime_sec, row_size_data, status_data, number
             read_traffic_bytes = Decimal(2) * read_count * (average_bytes + Decimal(100))
 
             cass_network_traffic_bytes = write_traffic_bytes + read_traffic_bytes
-            cass_network_repair_bytes = keyspace_compressed * Decimal(0.05)
+            cass_network_repair_bytes = space_used * Decimal(0.05)
 
             write_units = write_count * write_unit_per_write
             ttl_units = write_units if has_ttl else 0
             read_units = read_count * read_unit_per_read
 
-            keyspace_writes += write_units
-            keyspace_reads += read_units
-            keyspace_ttls += ttl_units
-            keyspace_network_traffic_bytes += cass_network_traffic_bytes
-            keyspace_network_repair_bytes += cass_network_repair_bytes
+            
+            # Store table data
+            result['keyspaces'][keyspace]['tables'][table] = {
+                'compressed_bytes': space_used,
+                'uncompressed_bytes': uncompressed_size,
+                'ratio': ratio,
+                'writes_units': write_units,
+                'read_units': read_units,
+                'ttl_units': ttl_units,
+                'row_size_bytes': average_bytes,
+                'network_traffic_gb': cass_network_traffic_bytes,
+                'network_repair_gb': cass_network_repair_bytes
+            }
 
-            # Add row to the table
+            # Update keyspace totals
+            result['keyspaces'][keyspace]['compressed_bytes'] += space_used
+            result['keyspaces'][keyspace]['uncompressed_bytes'] += uncompressed_size
+            result['keyspaces'][keyspace]['writes_units'] += write_units
+            result['keyspaces'][keyspace]['read_units'] += read_units
+            result['keyspaces'][keyspace]['ttl_units'] += ttl_units
+            result['keyspaces'][keyspace]['network_traffic_gb'] += cass_network_traffic_bytes 
+            result['keyspaces'][keyspace]['network_repair_gb'] += cass_network_repair_bytes
+
+            # Update cluster totals
+            cluster_key = 'system' if keyspace_type == 'system' else 'user'
+            result['cluster'][cluster_key]['compressed_bytes'] += space_used
+            result['cluster'][cluster_key]['uncompressed_bytes'] += uncompressed_size
+            result['cluster'][cluster_key]['writes_units'] += write_units
+            result['cluster'][cluster_key]['read_units'] += read_units
+            result['cluster'][cluster_key]['ttl_units'] += ttl_units
+            result['cluster'][cluster_key]['network_traffic_gb'] += cass_network_traffic_bytes
+            result['cluster'][cluster_key]['network_repair_gb'] += cass_network_repair_bytes
+
+            # Update stats
+            if keyspace_type == 'user':
+                result['stats']['total_user_tables'] += Decimal(1)
+
+                if write_units <= 0:
+                    result['stats']['tables_without_writes']['uncompressed_bytes'] += uncompressed_size
+                    result['stats']['tables_without_writes']['read_units'] += read_units
+                    if read_units <= 0:
+                        result['stats']['tables_without_writes_and_reads']['uncompressed_bytes'] += uncompressed_size
+
+                if read_units <= 0:
+                    result['stats']['tables_without_reads']['uncompressed_bytes'] += uncompressed_size
+                    result['stats']['tables_without_reads']['writes_units'] += write_units
+                    result['stats']['tables_without_reads']['ttl_units'] += ttl_units
+
+    
+    result['stats']['monthly_network']['gossip_gb'] = (
+        (GOSSIP_OUT_BYTES + GOSSIP_IN_BYTES) * number_of_nodes * 365/12*24*60*60/GIGABYTE
+    )
+
+    return result
+
+def print_rows(report_name, totals):
+    """
+    Print the data in a formatted table using the totals dictionary.
+    """
+    # Table headers
+    table_headers = [
+        "Keyspace", "Table", "Cassandra GB", "Ratio", "Keyspaces GB",
+        "Writes Unit p/s", "Reads Unit p/s", "TTL deletes p/s", "Row size bytes",
+        "Cass Network Traffic GB", "Cass Network Repair GB" 
+    ]
+
+    # List to store all rows
+    all_rows = []
+    #Calculate per-second rates
+    number_of_nodes = totals['stats']['number_of_nodes_per_dc']
+    uptime_sec = totals['stats']['uptime_seconds']
+    
+    # Add table rows
+    for keyspace, keyspace_data in totals['keyspaces'].items():
+        for table, table_data in keyspace_data['tables'].items():
+
+            
+            writes_per_sec = table_data['writes_units'] * number_of_nodes/Decimal(3)/uptime_sec
+            reads_per_sec = table_data['read_units'] * number_of_nodes/Decimal(2)/uptime_sec
+            ttls_per_sec = table_data['ttl_units'] * number_of_nodes/Decimal(3)/uptime_sec
+
+            #Calculate size in GB
+            compressed_gb = table_data['compressed_bytes'] * number_of_nodes/GIGABYTE
+            uncompressed_gb = table_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+            network_traffic_gb = table_data['network_traffic_gb'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+            network_repair_gb = table_data['network_repair_gb'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+
             row = [
                 keyspace,
                 table,
-                f"{space_used * number_of_nodes:,.2f}",
-                f"{ratio:.5f}",
-                f"{uncompressed_size * number_of_nodes/Decimal(3):,.0f}",
-                f"{write_units * number_of_nodes/Decimal(3)/uptime_sec:,.0f}",
-                f"{read_units * number_of_nodes/Decimal(2)/uptime_sec:,.0f}",
-                f"{ttl_units * number_of_nodes/Decimal(3)/uptime_sec:,.0f}",
-                f"{average_bytes:,.0f}",
-                f"{cass_network_traffic_bytes * number_of_nodes/GIGABYTE/uptime_sec:,.0f}",
-                f"{cass_network_repair_bytes * number_of_nodes/GIGABYTE/uptime_sec:,.0f}"
+                f"{compressed_gb:,.2f}",
+                f"{table_data['ratio']:.5f}",
+                f"{uncompressed_gb:,.0f}",
+                f"{writes_per_sec:,.0f}",
+                f"{reads_per_sec:,.0f}",
+                f"{ttls_per_sec:,.0f}",
+                f"{table_data['row_size_bytes']:,.0f}",
+                f"{network_traffic_gb:,.0f}",
+                f"{network_repair_gb:,.0f}"
             ]
             all_rows.append(row)
 
-            if keyspace not in system_keyspaces:
-                total_user_tables += Decimal(1)
-                
-                if write_units <= 0:
-                    total_uncompressed_without_writes += uncompressed_size
-                    total_reads_for_tables_without_writes += read_units
-                    if read_units <= 0:
-                        total_uncompressed_without_writes_and_reads += uncompressed_size
 
-                if read_units <= 0:
-                    total_uncompressed_without_reads += uncompressed_size
-                    total_writes_for_tables_without_reads += write_units
-                    total_ttl_for_tables_without_reads += ttl_units
-
+        writes_per_sec = keyspace_data['writes_units'] * number_of_nodes/Decimal(3)/uptime_sec
+        reads_per_sec = keyspace_data['read_units'] * number_of_nodes/Decimal(2)/uptime_sec
+        ttls_per_sec = keyspace_data['ttl_units'] * number_of_nodes/Decimal(3)/uptime_sec
         # Add keyspace subtotal row
-        safe_avg_ratio = 1 if keyspace_uncompressed <= 0 else (keyspace_compressed / keyspace_uncompressed)
-        total_compressed_gb = keyspace_compressed / GIGABYTE
-        total_uncompressed_gb = keyspace_uncompressed / GIGABYTE
+
+        #Calculate size in GB
+        compressed_gb = keyspace_data['compressed_bytes'] * number_of_nodes/GIGABYTE
+        uncompressed_gb = keyspace_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+        ratio = compressed_gb/uncompressed_gb if uncompressed_gb > 0 else Decimal(1)
+
+        network_traffic_gb = keyspace_data['network_traffic_gb'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
+        network_repair_gb = keyspace_data['network_repair_gb'] * number_of_nodes /GIGABYTE
 
         subtotal_row = [
             keyspace + " subtotal (GB)",
             "",
-            f"{total_compressed_gb.normalize():,.4f}",
-            f"{safe_avg_ratio:.5f}",
-            f"{total_uncompressed_gb.normalize():,.4f}",
-            f"{keyspace_writes/uptime_sec:,.0f}",
-            f"{keyspace_reads/uptime_sec:,.0f}",
-            f"{keyspace_ttls/uptime_sec:,.0f}",
+            f"{compressed_gb:,.4f}",
+            f"{ratio:.5f}",
+            f"{uncompressed_gb:,.4f}",
+            f"{writes_per_sec:,.0f}",
+            f"{reads_per_sec:,.0f}",
+            f"{ttls_per_sec:,.0f}",
             "",
-            f"{keyspace_network_traffic_bytes/GIGABYTE/uptime_sec:,.0f}",
-            f"{keyspace_network_repair_bytes/GIGABYTE/uptime_sec:,.0f}"
+            f"{network_traffic_gb:,.0f}",
+            f"{network_repair_gb:,.0f}"
         ]
         all_rows.append(subtotal_row)
-
-        # Add to system or user totals
-        if keyspace in system_keyspaces:
-            total_system_compressed += keyspace_compressed
-            total_system_uncompressed += keyspace_uncompressed
-            total_system_writes += keyspace_writes
-            total_system_reads += keyspace_reads
-            total_system_network_traffic_bytes += keyspace_network_traffic_bytes
-            total_system_network_repair_bytes += keyspace_network_repair_bytes
-        else:
-            total_dev_compressed += keyspace_compressed
-            total_dev_uncompressed += keyspace_uncompressed
-            total_dev_writes += keyspace_writes
-            total_dev_reads += keyspace_reads
-            total_dev_ttls += keyspace_ttls
-            total_dev_network_traffic_bytes += keyspace_network_traffic_bytes
-            total_dev_network_repair_bytes += keyspace_network_repair_bytes
 
     # Print the main table
     print("\nDetailed Table Statistics:")
     print(tabulate(all_rows, headers=table_headers, tablefmt="grid", 
                   colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right", "right", "right")))
 
-    # Calculate and print summary statistics
-    summary_headers = ["Category", "Compressed (GB)", "Ratio", "Uncompressed (GB)", "Writes p/s", "Reads p/s", "TTL deletes p/s"]
+    # Print summary statistics
+    summary_headers = ["Category", "Cassandra size (GB)", "Ratio", "Keyspaces size(GB)", "Writes p/s", "Reads p/s", "TTL deletes p/s", "Cass Network Traffic GB", "Cass Network Repair GB"]
     summary_rows = []
 
-    # System keyspaces summary
-    avg_system_compression_ratio = total_system_compressed / total_system_uncompressed if total_system_uncompressed > 0 else Decimal(1)
-    total_system_compressed_gb = total_system_compressed / GIGABYTE
-    total_system_uncompressed_gb = total_system_uncompressed / GIGABYTE
+    for category in ['system', 'user']:
+        cluster_data = totals['cluster'][category]
 
-    summary_rows.append([
-        "System",
-        f"{total_system_compressed_gb * number_of_nodes:,.2f}",
-        f"{avg_system_compression_ratio:.5f}",
-        f"{(total_system_uncompressed_gb * number_of_nodes)/3:,.2f}",
-        f"{((total_system_writes * number_of_nodes)/3) / uptime_sec:,.0f}",
-        f"{((total_system_reads * number_of_nodes)/2) / uptime_sec:,.0f}",
-        ""
-    ])
+        writes_per_sec = cluster_data['writes_units'] * number_of_nodes/Decimal(3)/uptime_sec
+        reads_per_sec = cluster_data['read_units'] * number_of_nodes/Decimal(2)/uptime_sec
+        ttls_per_sec = cluster_data['ttl_units'] * number_of_nodes/Decimal(3)/uptime_sec
 
-    # User keyspaces summary
-    avg_dev_compression_ratio = total_dev_compressed / total_dev_uncompressed if total_dev_uncompressed > 0 else Decimal(1)
-    total_dev_compressed_gb = total_dev_compressed / GIGABYTE
-    total_dev_uncompressed_gb = total_dev_uncompressed / GIGABYTE
+        compressed_gb = cluster_data['compressed_bytes'] * number_of_nodes/GIGABYTE
+        uncompressed_gb = cluster_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+        ratio = compressed_gb/uncompressed_gb if uncompressed_gb > 0 else Decimal(1)
 
-    summary_rows.append([
-        "User",
-        f"{total_dev_compressed_gb * number_of_nodes:,.2f}",
-        f"{avg_dev_compression_ratio:.5f}",
-        f"{total_dev_uncompressed_gb:,.2f}",
-        f"{total_dev_writes / uptime_sec:,.0f}",
-        f"{total_dev_reads / uptime_sec:,.0f}",
-        f"{total_dev_ttls / uptime_sec:,.0f}"
-    ])
+        network_traffic_gb = cluster_data['network_traffic_gb'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
+        network_repair_gb = cluster_data['network_repair_gb'] * number_of_nodes /GIGABYTE
+
+        summary_rows.append([
+            category.capitalize(),
+            f"{compressed_gb:,.2f}",
+            f"{ratio:.5f}",
+            f"{uncompressed_gb:,.2f}",
+            f"{writes_per_sec:,.0f}",
+            f"{reads_per_sec:,.0f}",
+            f"{ttls_per_sec:,.0f}" if category == 'user' else "",
+            f"{network_traffic_gb:,.0f}",
+            f"{network_repair_gb:,.0f}"
+        ])
 
     print("\nSummary Statistics:")
     print(tabulate(summary_rows, headers=summary_headers, tablefmt="grid",
@@ -524,31 +658,45 @@ def print_data(report_name, data, uptime_sec, row_size_data, status_data, number
 
     # Print additional statistics
     stats_headers = ["Metric", "Value", "Description"]
+
+    uptime_days = totals['stats']['uptime_seconds']/86400
+    uncompresseed_size_without_writes_gb = totals['stats']['tables_without_writes']['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+    uncompresseed_size_without_reads_gb = totals['stats']['tables_without_reads']['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+    uncompresseed_size_without_reads_and_writes_gb = totals['stats']['tables_without_writes_and_reads']['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
+    total_read_units_without_writes = totals['stats']['tables_without_writes']['read_units'] * number_of_nodes/Decimal(2)/uptime_sec
+    total_write_units_without_reads = totals['stats']['tables_without_reads']['writes_units'] * number_of_nodes/Decimal(3)/uptime_sec
+    total_ttl_units_without_reads = totals['stats']['tables_without_reads']['ttl_units'] * number_of_nodes/Decimal(3)/uptime_sec
+    
+    network_traffic_gb =  (totals['cluster']['system']['network_traffic_gb'] + totals['cluster']['user']['network_traffic_gb']) * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+    network_repair_gb =  (totals['cluster']['system']['network_repair_gb'] + totals['cluster']['user']['network_repair_gb']) * number_of_nodes/GIGABYTE
+    gossip_gb = totals['stats']['monthly_network']['gossip_gb']
+
+    
     stats_rows = [
-        ["Number of tables", f"{total_user_tables:,.2f}", "number of user tables found in tablestats"],
-        ["Total uptime in days", f"{uptime_sec/(60*60*24):,.2f}", "number of days the node has been up"],
-        ["Uncompressed estimate for tables without writes", f"{((total_uncompressed_without_writes/Decimal(1000000000)) * number_of_nodes)/Decimal(3):,.2f}", "Total size of tables without writes during the node uptime"],
-        ["Total read units per second on tables without writes", f"{((total_reads_for_tables_without_writes * number_of_nodes)/uptime_sec)/Decimal(3):,.2f}", "Average number of read units per second for tables without writes during the node uptime"],
-        ["Uncompressed estimate for tables without reads", f"{((total_uncompressed_without_reads/Decimal(1000000000)) * number_of_nodes)/Decimal(3):,.2f}", "Total size of tables without reads during the node uptime"],
-        ["Total write units per second on tables without reads", f"{((total_writes_for_tables_without_reads * number_of_nodes)/uptime_sec)/Decimal(3):,.2f}", "Average number of write units per second for tables without reads during the node uptime"],
-        ["Total ttl units per second on tables without reads", f"{((total_ttl_for_tables_without_reads * number_of_nodes)/Decimal(3)/uptime_sec):,.2f}", "Average number of ttl units per second for tables without reads during the node uptime"],
-        ["Uncompressed estimate for tables without writes and reads", f"{((total_uncompressed_without_writes_and_reads/Decimal(1000000000)) * number_of_nodes)/Decimal(3):,.2f}", "Total size of tables without writes and reads during the node uptime"]
+
+        ["Number of tables to migrate", f"{totals['stats']['total_user_tables']:,.2f}", "number of user tables found in tablestats"],
+        ["Node uptime in days", f"{uptime_days:,.2f}", "number of days the node has been up"],
+        ["Uncompressed estimate for tables without writes", f"{uncompresseed_size_without_writes_gb:,.2f}", "Total size of tables without writes during the node uptime"],
+        ["Total read units per second on tables without writes", f"{total_read_units_without_writes:,.2f}", "Average number of read units per second for tables without writes during the node uptime"],
+        ["Uncompressed estimate for tables without reads", f"{uncompresseed_size_without_reads_gb:,.2f}", "Total size of tables without reads during the node uptime"],
+        ["Total write units per second on tables without reads", f"{total_write_units_without_reads:,.2f}", "Average number of write units per second for tables without reads during the node uptime"],
+        ["Total ttl units per second on tables without reads", f"{total_ttl_units_without_reads:,.2f}", "Average number of ttl units per second for tables without reads during the node uptime"],
+        ["Uncompressed estimate for tables without writes and reads", f"{uncompresseed_size_without_reads_and_writes_gb:,.2f}", "Total size of tables without writes and reads during the node uptime"],
+        ["Monthly network traffic estimate for writes and reads GB", f"{network_traffic_gb:,.2f}", "Total network traffic estimate for tables without writes and reads for the month"],
+        ["Monthly network traffic estimate for repair and compaction GB", f"{network_repair_gb:,.2f}", "Total network traffic estimate for repair for the month"],
+        ["Monthly network traffic estimate for gossip GB", f"{gossip_gb:,.2f}", "Total network traffic estimate for gossip for the month"]
     ]
-
-    # Calculate network traffic estimates
-    monthly_repair_bytes = (total_dev_network_repair_bytes + total_system_network_repair_bytes) * number_of_nodes/GIGABYTE
-    monthly_traffic_bytes = (total_dev_network_traffic_bytes + total_system_network_traffic_bytes) * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
-    monthly_gossip_bytes = (GOSSIP_OUT_BYTES + GOSSIP_IN_BYTES) * number_of_nodes * 365/12*24*60*60/GIGABYTE
-
-    stats_rows.extend([
-        ["Monthly network traffic estimate for writes and reads GB", f"{monthly_traffic_bytes:,.2f}", "Total network traffic estimate for tables without writes and reads for the month"],
-        ["Monthly network traffic estimate for repair and compaction GB", f"{monthly_repair_bytes:,.2f}", "Total network traffic estimate for repair for the month"],
-        ["Monthly network traffic estimate for gossip GB", f"{monthly_gossip_bytes:,.2f}", "Total network traffic estimate for gossip for the month"]
-    ])
 
     print("\nAdditional Statistics:")
     print(tabulate(stats_rows, headers=stats_headers, tablefmt="grid",
                   colalign=("left", "right", "left")))
+
+def print_data(report_name, data, uptime_sec, row_size_data, status_data, number_of_nodes=Decimal(1), filter_keyspace=None):
+    """
+    Main function that coordinates the calculation and printing of data.
+    """
+    totals = calculate_totals(data, uptime_sec, row_size_data, number_of_nodes, filter_keyspace)
+    print_rows(report_name, totals)
 
 def calcualteCassandraSizeGB (total_compressed, number_of_nodes):
     return (total_compressed * number_of_nodes)/Decimal(1000000000)
