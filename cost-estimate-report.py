@@ -9,6 +9,7 @@ import json
 import re
 from typing import Dict
 from tabulate import tabulate
+import json
 
 # ## Overview
 #
@@ -37,6 +38,14 @@ GIGABYTE = Decimal(1000000000)
 GOSSIP_OUT_BYTES = Decimal(1638)
 GOSSIP_IN_BYTES = Decimal(3072)
 
+system_keyspaces = {
+        'OpsCenter', 'dse_insights_local', 'solr_admin',
+        'dse_system', 'HiveMetaStore', 'system_auth',
+        'dse_analytics', 'system_traces', 'dse_audit', 'system',
+        'dse_system_local', 'dsefs', 'system_distributed', 'system_schema',
+        'dse_perf', 'dse_insights', 'system_backups', 'dse_security',
+        'dse_leases', 'system_distributed_everywhere', 'reaper_db'
+    }
 # Parse row size file
 def parse_row_size_info(lines):
 
@@ -101,9 +110,22 @@ def parse_nodetool_info(lines):
                 except Exception:
 
                     raise Exception(f"Error parsing uptime in seconds: {parts[1]}") 
+        if "ID" in line:
+            print(f"{line}")
+            # Format is something like: "Uptime (seconds): X"
+            id_parts = line.replace('\n', ' ').replace('\\', '').split(':', 1)
+            if len(id_parts) == 2:
+                id = id_parts[1].strip()
+
+        if "Data Center" in line:
+            print(f"{line}")
+            # Format is something like: "Uptime (seconds): X"
+            dcparts = line.replace('\n', ' ').replace('\\', '').split(':', 1)
+            if len(dcparts) == 2:
+                dc = dcparts[1].strip()       
                     # If parsing fails, default to one second
     # If not found, return 1 by default (1 second)
-    return uptime_seconds
+    return {'uptime_seconds':uptime_seconds, 'dc':dc, 'id':id}
 
 
 def parse_nodetool_output(lines):
@@ -305,6 +327,240 @@ def parse_nodetool_status(lines: List[str]) -> Dict:
 
     return {"datacenter_count": len(dc_map), "datacenters": dc_map}
 
+def parse_cassandra_schema(scehma_content):
+    """
+    Returns:
+        dict: A dictionary representing the parsed Cassandra schema with the following structure:
+
+        {
+        "<file_path>": {
+            "<keyspace_name>": {
+            "class": "<replication_class>",            # e.g., "NetworkTopologyStrategy"
+            "datacenters": {
+                "<dc_name>": <replication_factor>,       # e.g., "us-west-2": 3
+                ...
+            },
+            "tables": [
+                "<table_name>",                          # e.g., "users"
+                ...
+            ]
+            },
+            ...
+        }
+        }
+    """
+   
+    ks_pattern = re.compile(
+        r"CREATE KEYSPACE (\w+)\s+WITH replication = \{[^}]*'class': '(\w+)'(?:,\s*)?([^}]*)\}",
+        re.IGNORECASE)
+    table_pattern = re.compile(
+        r"CREATE TABLE (\w+)\.(\w+)", re.IGNORECASE)
+
+    # Extract keyspaces
+    keyspaces = ks_pattern.findall(scehma_content)
+    
+    tables = table_pattern.findall(scehma_content)
+
+    # Build dictionary
+    ks_info = {}
+    for ks_name, ks_class, rest in keyspaces:
+        dc_repl = {}
+        if ks_class == "NetworkTopologyStrategy":
+            dc_entries = re.findall(r"'([^']+)':\s*'(\d+)'", rest)
+            dc_repl = {dc: int(rf) for dc, rf in dc_entries}
+        ks_info[ks_name] = {
+            "class": ks_class,
+            "datacenters": dc_repl,
+            "tables": []
+        }
+
+    # Attach tables
+    for ks, tbl in tables:
+        if ks in ks_info:
+            ks_info[ks]["tables"].append(tbl)
+
+    return ks_info
+
+    
+
+def build_cassandra_set(tablestats_data, schema, info_data, row_size_data, status_data=None, schema_content=None, filter_keyspace=None):
+    """
+    Calculate totals and build a hierarchical data structure.
+    Returns a dictionary with the following structure:
+    {
+        'cluster': {
+            'cluster_nodes': Decimal,
+            'total_dcs': Decimal,
+            'total_keyspaces': Decimal,
+            'total_tables': Decimal,
+            'keyspaces': {
+                'keyspace_name': {
+                    'total_dcs': Decimal,
+                    'total_nodes': Decimal,
+                    'type': str, #system or user
+                    'tables': {
+                        'table_name': {
+                            'keyspace_name': str,
+                            'total_dcs': Decimal,
+                            'total_nodes': Decimal,
+                            'dcs': {
+                                'datacenter_name': {  
+                                    'total_nodes': Decimal,
+                                    'total_samples': Decimal,
+                                    'node_samples': {
+                                        'node_name': {
+                                            'host': str,
+                                            'uptime_seconds': Decimal,
+                                            'compressed_bytes': Decimal,
+                                            'ratio': Decimal,
+                                            'writes': Decimal,
+                                            'reads': Decimal,
+                                            'row_size_bytes': Decimal,
+                                            'has_ttl': bool
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+    result = {
+        'cluster': {
+            'cluster_nodes': Decimal(0),
+            'total_dcs': Decimal(0),
+            'total_keyspaces': Decimal(0),
+            'total_tables': Decimal(0),
+            'keyspaces': {}
+        }
+    }
+
+    # Get current node info from info_data
+    current_dc_from_info = info_data.get('dc', 'default')
+    node_id = info_data.get('id', 'default')
+    uptime_seconds = info_data.get('uptime_seconds', Decimal(1))
+
+    # Initialize cluster-level statistics from status_data
+    if status_data and 'datacenters' in status_data:
+        total_cluster_nodes = Decimal(0)
+        for dc_name, dc_info in status_data['datacenters'].items():
+            node_count = Decimal(dc_info.get('node_count', 0))
+            total_cluster_nodes += node_count
+        
+        result['cluster']['cluster_nodes'] = total_cluster_nodes
+        result['cluster']['total_dcs'] = Decimal(len(status_data['datacenters']))
+    else:
+        result['cluster']['cluster_nodes'] = Decimal(1)
+        result['cluster']['total_dcs'] = Decimal(1)
+
+    # Process each keyspace and its tables
+    for keyspace, tables in tablestats_data.items():
+        # Skip if we're filtering for a specific keyspace
+        if filter_keyspace and keyspace != filter_keyspace:
+            continue
+
+        # Determine if this is a system keyspace
+        keyspace_type = 'system' if keyspace in system_keyspaces else 'user'
+
+        #get the current dcs from the schema if available, otherwise use the dc from the info_data
+        current_dcs_from_schema = schema.get(keyspace, {}).get('datacenters', {}).keys() if schema else [info_data.get('dc', 'default')]
+
+        #if the keyspace is a system keyspace and the schema is empty, use the datacenters from the status_data
+        if len(current_dcs_from_schema) == 0 and keyspace_type == 'system':
+            current_dcs_from_schema = status_data['datacenters'].keys()
+
+        #get the total nodes for the keyspace based on the current_dcs. Check status_data for the nodes
+        total_nodes = 0
+        for dc in current_dcs_from_schema:
+            total_nodes += status_data['datacenters'][dc].get('node_count', 0)
+
+        # Initialize keyspace structure
+        result['cluster']['keyspaces'][keyspace] = {
+            'total_dcs': len(current_dcs_from_schema),
+            'total_nodes': total_nodes,
+            'type': keyspace_type,
+            'tables': {}
+        }
+
+        # Process each table in the keyspace
+        for table, space_used, ratio, read_count, write_count in tables:
+            # Get row size data if available
+            fully_qualified_table_name = f"{keyspace}.{table}"
+            row_size_info = row_size_data.get(fully_qualified_table_name, {})
+            
+            # Extract average row size, defaulting to 0 if not found
+            avg_str = row_size_info.get('average', '0 bytes')
+            avg_number_str = avg_str.split()[0]
+            has_ttl = row_size_info.get('default-ttl', 'y').strip() == 'n'
+
+            if keyspace_type == 'system':
+                average_bytes = 100 #TODO change row size sample for system keyspaces
+            else:
+                try:
+                    average_bytes = Decimal(avg_number_str)
+                except (ValueError, IndexError):
+                    average_bytes = Decimal(0)
+
+            # Initialize table structure
+            result['cluster']['keyspaces'][keyspace]['tables'][table] = {
+                'keyspace_name': keyspace,
+                'total_dcs': len(current_dcs_from_schema),
+                'total_nodes': total_nodes,
+                'dcs': {}
+            }
+
+            # Add data for all datacenters
+            if status_data and 'datacenters' in status_data:
+                for dc_name, dc_info in status_data['datacenters'].items():
+                    if dc_name in current_dcs_from_schema:
+                        node_count = Decimal(dc_info.get('node_count', 0))
+                        result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name] = {
+                            'total_nodes': node_count,
+                            'total_samples': Decimal(0),
+                            'node_samples': {}
+                        }
+                    
+                        # If this is the current datacenter, add the current node's data
+                        if dc_name == current_dc_from_info:
+                            result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name]['total_samples'] += Decimal(1)
+                            result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name]['node_samples'][node_id] = {
+                                'host': node_id,
+                                'uptime_seconds': uptime_seconds,
+                                'compressed_bytes': space_used,
+                                'ratio': ratio,
+                                'writes': write_count,
+                                'reads': read_count,
+                                'row_size_bytes': average_bytes,
+                                'has_ttl': has_ttl
+                            }
+            else:
+                # If no status data, just add the current datacenter
+                result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][current_dc] = {
+                    'total_nodes': Decimal(1),
+                    'total_samples': Decimal(1),
+                    'node_samples': {
+                        node_id: {
+                            'host': node_id,
+                            'uptime_seconds': uptime_seconds,
+                            'compressed_bytes': space_used,
+                            'ratio': ratio,
+                            'writes': write_count,
+                            'reads': read_count,
+                            'row_size_bytes': average_bytes,
+                            'has_ttl': has_ttl
+                        }
+                    }
+                }
+
+    # Update cluster-level statistics
+    result['cluster']['total_keyspaces'] = Decimal(len(result['cluster']['keyspaces']))
+    total_tables = sum(Decimal(len(ks['tables'])) for ks in result['cluster']['keyspaces'].values())
+    result['cluster']['total_tables'] = total_tables
+
+    return result
 
 def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1), filter_keyspace=None):
     """
@@ -319,8 +575,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'writes_units': Decimal,
                 'read_units': Decimal,
                 'ttl_units': Decimal,
-                'network_traffic_gb': Decimal,
-                'network_repair_gb': Decimal
+                'network_traffic_bytes': Decimal,
+                'network_repair_bytes': Decimal
             },
             'user': {
                 'compressed_bytes': Decimal,
@@ -328,8 +584,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'writes_units': Decimal,
                 'read_units': Decimal,
                 'ttl_units': Decimal,
-                'network_traffic_gb': Decimal,
-                'network_repair_gb': Decimal
+                'network_traffic_bytes': Decimal,
+                'network_repair_bytes': Decimal
             }
         },
         'keyspaces': {
@@ -340,8 +596,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'writes_units': Decimal,
                 'read_units': Decimal,
                 'ttl_units': Decimal,
-                'network_traffic_gb': Decimal,
-                'network_repair_gb': Decimal,
+                'network_traffic_bytes': Decimal,
+                'network_repair_bytes': Decimal,
                 'tables': {
                     'table_name': {
                         'compressed_bytes': Decimal,
@@ -351,8 +607,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                         'read_units': Decimal,
                         'ttl_units': Decimal,
                         'row_size_bytes': Decimal,
-                        'network_traffic_gb': Decimal,
-                        'network_repair_gb': Decimal
+                        'network_traffic_bytes': Decimal,
+                        'network_repair_bytes': Decimal
                     }
                 }
             }
@@ -381,14 +637,7 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
         }
     }
     """
-    system_keyspaces = {
-        'OpsCenter', 'dse_insights_local', 'solr_admin',
-        'dse_system', 'HiveMetaStore', 'system_auth',
-        'dse_analytics', 'system_traces', 'dse_audit', 'system',
-        'dse_system_local', 'dsefs', 'system_distributed', 'system_schema',
-        'dse_perf', 'dse_insights', 'system_backups', 'dse_security',
-        'dse_leases', 'system_distributed_everywhere', 'reaper_db'
-    }
+    
 
     result = {
         'system_keyspaces': system_keyspaces,
@@ -399,8 +648,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'writes_units': Decimal(0),
                 'read_units': Decimal(0),
                 'ttl_units': Decimal(0),
-                'network_traffic_gb': Decimal(0),
-                'network_repair_gb': Decimal(0)
+                'network_traffic_bytes': Decimal(0),
+                'network_repair_bytes': Decimal(0)
             },
             'user': {
                 'compressed_bytes': Decimal(0),
@@ -408,8 +657,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'writes_units': Decimal(0),
                 'read_units': Decimal(0),
                 'ttl_units': Decimal(0),
-                'network_traffic_gb': Decimal(0),
-                'network_repair_gb': Decimal(0)
+                'network_traffic_bytes': Decimal(0),
+                'network_repair_bytes': Decimal(0)
             }
         },
         'keyspaces': {},
@@ -451,8 +700,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
             'writes_units': Decimal(0),
             'read_units': Decimal(0),
             'ttl_units': Decimal(0),
-            'network_traffic_gb': Decimal(0),
-            'network_repair_gb': Decimal(0),
+            'network_traffic_bytes': Decimal(0),
+            'network_repair_bytes': Decimal(0),
             'tables': {}
         }
 
@@ -476,8 +725,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
             write_unit_per_write = Decimal(1) if average_bytes < 1024 else math.ceil(average_bytes/Decimal(1024))
             read_unit_per_read = Decimal(1) if average_bytes < 4096 else math.ceil(average_bytes/Decimal(4096))
 
-            write_traffic_bytes = Decimal(2) * write_count * (average_bytes + Decimal(100))
-            read_traffic_bytes = Decimal(2) * read_count * (average_bytes + Decimal(100))
+            write_traffic_bytes = Decimal(2)/Decimal(3) * write_count * (average_bytes + Decimal(100))
+            read_traffic_bytes = Decimal(2)/Decimal(3) * read_count * (average_bytes + Decimal(100))
 
             cass_network_traffic_bytes = write_traffic_bytes + read_traffic_bytes
             cass_network_repair_bytes = space_used * Decimal(0.05)
@@ -496,8 +745,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
                 'read_units': read_units,
                 'ttl_units': ttl_units,
                 'row_size_bytes': average_bytes,
-                'network_traffic_gb': cass_network_traffic_bytes,
-                'network_repair_gb': cass_network_repair_bytes
+                'network_traffic_bytes': cass_network_traffic_bytes,
+                'network_repair_bytes': cass_network_repair_bytes
             }
 
             # Update keyspace totals
@@ -506,8 +755,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
             result['keyspaces'][keyspace]['writes_units'] += write_units
             result['keyspaces'][keyspace]['read_units'] += read_units
             result['keyspaces'][keyspace]['ttl_units'] += ttl_units
-            result['keyspaces'][keyspace]['network_traffic_gb'] += cass_network_traffic_bytes 
-            result['keyspaces'][keyspace]['network_repair_gb'] += cass_network_repair_bytes
+            result['keyspaces'][keyspace]['network_traffic_bytes'] += cass_network_traffic_bytes 
+            result['keyspaces'][keyspace]['network_repair_bytes'] += cass_network_repair_bytes
 
             # Update cluster totals
             cluster_key = 'system' if keyspace_type == 'system' else 'user'
@@ -516,8 +765,8 @@ def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1)
             result['cluster'][cluster_key]['writes_units'] += write_units
             result['cluster'][cluster_key]['read_units'] += read_units
             result['cluster'][cluster_key]['ttl_units'] += ttl_units
-            result['cluster'][cluster_key]['network_traffic_gb'] += cass_network_traffic_bytes
-            result['cluster'][cluster_key]['network_repair_gb'] += cass_network_repair_bytes
+            result['cluster'][cluster_key]['network_traffic_bytes'] += cass_network_traffic_bytes
+            result['cluster'][cluster_key]['network_repair_bytes'] += cass_network_repair_bytes
 
             # Update stats
             if keyspace_type == 'user':
@@ -570,8 +819,8 @@ def print_rows(report_name, totals):
             #Calculate size in GB
             compressed_gb = table_data['compressed_bytes'] * number_of_nodes/GIGABYTE
             uncompressed_gb = table_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
-            network_traffic_gb = table_data['network_traffic_gb'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
-            network_repair_gb = table_data['network_repair_gb'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+            network_traffic_bytes = table_data['network_traffic_bytes'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+            network_repair_bytes = table_data['network_repair_bytes'] * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
 
             row = [
                 keyspace,
@@ -583,8 +832,8 @@ def print_rows(report_name, totals):
                 f"{reads_per_sec:,.0f}",
                 f"{ttls_per_sec:,.0f}",
                 f"{table_data['row_size_bytes']:,.0f}",
-                f"{network_traffic_gb:,.0f}",
-                f"{network_repair_gb:,.0f}"
+                f"{network_traffic_bytes:,.0f}",
+                f"{network_repair_bytes:,.0f}"
             ]
             all_rows.append(row)
 
@@ -599,8 +848,8 @@ def print_rows(report_name, totals):
         uncompressed_gb = keyspace_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
         ratio = compressed_gb/uncompressed_gb if uncompressed_gb > 0 else Decimal(1)
 
-        network_traffic_gb = keyspace_data['network_traffic_gb'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
-        network_repair_gb = keyspace_data['network_repair_gb'] * number_of_nodes /GIGABYTE
+        network_traffic_bytes = keyspace_data['network_traffic_bytes'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
+        network_repair_bytes = keyspace_data['network_repair_bytes'] * number_of_nodes /GIGABYTE
 
         subtotal_row = [
             keyspace + " subtotal (GB)",
@@ -612,8 +861,8 @@ def print_rows(report_name, totals):
             f"{reads_per_sec:,.0f}",
             f"{ttls_per_sec:,.0f}",
             "",
-            f"{network_traffic_gb:,.0f}",
-            f"{network_repair_gb:,.0f}"
+            f"{network_traffic_bytes:,.0f}",
+            f"{network_repair_bytes:,.0f}"
         ]
         all_rows.append(subtotal_row)
 
@@ -637,8 +886,8 @@ def print_rows(report_name, totals):
         uncompressed_gb = cluster_data['uncompressed_bytes'] * number_of_nodes/Decimal(3)/GIGABYTE
         ratio = compressed_gb/uncompressed_gb if uncompressed_gb > 0 else Decimal(1)
 
-        network_traffic_gb = cluster_data['network_traffic_gb'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
-        network_repair_gb = cluster_data['network_repair_gb'] * number_of_nodes /GIGABYTE
+        network_traffic_bytes = cluster_data['network_traffic_bytes'] * number_of_nodes/uptime_sec * 365/12*24*60*60/GIGABYTE
+        network_repair_bytes = cluster_data['network_repair_bytes'] * number_of_nodes /GIGABYTE
 
         summary_rows.append([
             category.capitalize(),
@@ -648,8 +897,8 @@ def print_rows(report_name, totals):
             f"{writes_per_sec:,.0f}",
             f"{reads_per_sec:,.0f}",
             f"{ttls_per_sec:,.0f}" if category == 'user' else "",
-            f"{network_traffic_gb:,.0f}",
-            f"{network_repair_gb:,.0f}"
+            f"{network_traffic_bytes:,.0f}",
+            f"{network_repair_bytes:,.0f}"
         ])
 
     print("\nSummary Statistics:")
@@ -667,8 +916,8 @@ def print_rows(report_name, totals):
     total_write_units_without_reads = totals['stats']['tables_without_reads']['writes_units'] * number_of_nodes/Decimal(3)/uptime_sec
     total_ttl_units_without_reads = totals['stats']['tables_without_reads']['ttl_units'] * number_of_nodes/Decimal(3)/uptime_sec
     
-    network_traffic_gb =  (totals['cluster']['system']['network_traffic_gb'] + totals['cluster']['user']['network_traffic_gb']) * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
-    network_repair_gb =  (totals['cluster']['system']['network_repair_gb'] + totals['cluster']['user']['network_repair_gb']) * number_of_nodes/GIGABYTE
+    network_traffic_bytes =  (totals['cluster']['system']['network_traffic_bytes'] + totals['cluster']['user']['network_traffic_bytes']) * number_of_nodes/GIGABYTE/uptime_sec * 365/12*24*60*60
+    network_repair_bytes =  (totals['cluster']['system']['network_repair_bytes'] + totals['cluster']['user']['network_repair_bytes']) * number_of_nodes/GIGABYTE
     gossip_gb = totals['stats']['monthly_network']['gossip_gb']
 
     
@@ -682,8 +931,8 @@ def print_rows(report_name, totals):
         ["Total write units per second on tables without reads", f"{total_write_units_without_reads:,.2f}", "Average number of write units per second for tables without reads during the node uptime"],
         ["Total ttl units per second on tables without reads", f"{total_ttl_units_without_reads:,.2f}", "Average number of ttl units per second for tables without reads during the node uptime"],
         ["Uncompressed estimate for tables without writes and reads", f"{uncompresseed_size_without_reads_and_writes_gb:,.2f}", "Total size of tables without writes and reads during the node uptime"],
-        ["Monthly network traffic estimate for writes and reads GB", f"{network_traffic_gb:,.2f}", "Total network traffic estimate for tables without writes and reads for the month"],
-        ["Monthly network traffic estimate for repair and compaction GB", f"{network_repair_gb:,.2f}", "Total network traffic estimate for repair for the month"],
+        ["Monthly network traffic estimate for writes and reads GB", f"{network_traffic_bytes:,.2f}", "Total network traffic estimate for tables without writes and reads for the month"],
+        ["Monthly network traffic estimate for repair and compaction GB", f"{network_repair_bytes:,.2f}", "Total network traffic estimate for repair for the month"],
         ["Monthly network traffic estimate for gossip GB", f"{gossip_gb:,.2f}", "Total network traffic estimate for gossip for the month"]
     ]
 
@@ -691,12 +940,7 @@ def print_rows(report_name, totals):
     print(tabulate(stats_rows, headers=stats_headers, tablefmt="grid",
                   colalign=("left", "right", "left")))
 
-def print_data(report_name, data, uptime_sec, row_size_data, status_data, number_of_nodes=Decimal(1), filter_keyspace=None):
-    """
-    Main function that coordinates the calculation and printing of data.
-    """
-    totals = calculate_totals(data, uptime_sec, row_size_data, number_of_nodes, filter_keyspace)
-    print_rows(report_name, totals)
+ 
 
 def calcualteCassandraSizeGB (total_compressed, number_of_nodes):
     return (total_compressed * number_of_nodes)/Decimal(1000000000)
@@ -713,6 +957,18 @@ def calcualteTTLUnits (total_ttl, number_of_nodes, replication_factor, uptime_se
 def calcualteReadUnits (total_reads, number_of_nodes, replication_factor, uptime_sec):
     return ((total_writes * number_of_nodes)/Decimal(replication_factor))/uptime_sec
 
+def decimal_to_str(obj):
+    """
+    Convert Decimal objects to strings for JSON serialization.
+    """
+    if isinstance(obj, Decimal):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: decimal_to_str(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [decimal_to_str(item) for item in obj]
+    return obj
+
 def main():
     # Set decimal precision if needed
     getcontext().prec = 10
@@ -724,10 +980,12 @@ def main():
     parser.add_argument('--table-stats-file', help='Path to the nodetool tablestats output file', required=True)
     parser.add_argument('--info-file', help='Path to the nodetool info output file', required=True)
     parser.add_argument('--status-file', help='Path to the nodetool status output file')
-    parser.add_argument('--row-size-file', help='Path to the file containing row size information', required=True)
+    parser.add_argument('--row-size-file', help='Path to the file containing row size information')
     parser.add_argument('--number-of-nodes', type=Decimal,
                         help='Number of nodes in the cluster (must be a number)', default=0)
     parser.add_argument('--single-keyspace', type=str, default=None,
+                        help='Calculate a single keyspace. Leave out to calculate all keyspaces')
+    parser.add_argument('--schema-file', type=str, default=None,
                         help='Calculate a single keyspace. Leave out to calculate all keyspaces')
 
     # Parse arguments
@@ -752,35 +1010,52 @@ def main():
     # Read the row size file
     with open(args.row_size_file, 'r') as f:
         row_size_lines = f.readlines()
-
-    with open(args.status_file, 'r') as f:
-        status_lines = f.readlines()
+    
+    if args.schema_file:
+        with open(args.schema_file, 'r') as f:
+            schema_content = f.read()
+            schema = parse_cassandra_schema(schema_content)
+    else:
+        schema = None
 
     # Parse the nodetool cfstats data
     tablestats_data = parse_nodetool_output(tablestat_lines)
     # Parse the nodetool info data (to get uptime)
-    uptime_seconds = parse_nodetool_info(info_lines)
+    info_data = parse_nodetool_info(info_lines)
     # Parse the rowsize data (to get uptime)
     row_size_data = parse_row_size_info(row_size_lines)
-
-    status_data = parse_nodetool_status(status_lines)
-    print(status_data)
+    
     number_of_nodes = 0
-    if status_data['datacenters']:
-        # Get the first datacenter's node count from the dictionary
-        first_dc = next(iter(status_data['datacenters'].values()))
-        print(first_dc)
-        number_of_nodes = first_dc['node_count']
 
     if(args.number_of_nodes > 0):
         number_of_nodes = args.number_of_nodes
+    else:
+        with open(args.status_file, 'r') as f:
+            status_lines = f.readlines()
+    
+        status_data = parse_nodetool_status(status_lines)
+    
+        if status_data['datacenters']:
+            # Get the first datacenter's node count from the dictionary
+            first_dc = next(iter(status_data['datacenters'].values()))
+
+            number_of_nodes = first_dc['node_count']
 
     if(number_of_nodes == 0):
         print("Error: Number of nodes is not set. Please pass in status file using --status-file or set the number of nodes using the --number-of-nodes argument.")
         exit(1)
+    
+    single_keyspace = args.single_keyspace
+    
+    uptime_seconds = info_data['uptime_seconds']
 
+    totals = calculate_totals(tablestats_data, uptime_seconds, row_size_data, number_of_nodes, single_keyspace)
+    
+    print_rows(report_name, totals)
     # Print the compiled data
-    print_data(report_name, tablestats_data, uptime_seconds, row_size_data, status_data, number_of_nodes)
+    res = build_cassandra_set(tablestats_data, schema, info_data, row_size_data, status_data, schema_content, single_keyspace)
+
+    #print(json.dumps(decimal_to_str(res), indent=4))
 
 if __name__ == "__main__":
     main()
