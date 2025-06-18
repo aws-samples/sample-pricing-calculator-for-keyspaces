@@ -38,6 +38,14 @@ GIGABYTE = Decimal(1000000000)
 GOSSIP_OUT_BYTES = Decimal(1638)
 GOSSIP_IN_BYTES = Decimal(3072)
 
+REPLICATION_FACTOR = Decimal(3)
+# Constants for Keyspaces calculations
+SECONDS_PER_MONTH =  Decimal(365)/Decimal(12) * Decimal(24 * 60 * 60) 
+HOURS_PER_MONTH = Decimal(365)/Decimal(12) * Decimal(24) 
+WRITE_UNIT_SIZE = Decimal(1024)  # 1KB
+READ_UNIT_SIZE = Decimal(4096)   # 4KB
+ONE_MILLION = Decimal(1000000)
+
 system_keyspaces = {
         'OpsCenter', 'dse_insights_local', 'solr_admin',
         'dse_system', 'HiveMetaStore', 'system_auth',
@@ -133,10 +141,15 @@ def parse_nodetool_output(lines):
     Parse the nodetool cfstats/tablestats output and return a dictionary of keyspaces and their tables.
     The structure returned is:
     {
-        keyspace_name: [
-            (table_name, space_used (Decimal), compression_ratio (Decimal), write_count (Decimal), read_count (Decimal)),
+        keyspace_name: {
+            table_name: {
+                'space_used': Decimal,
+                'compression_ratio': Decimal,
+                'write_count': Decimal,
+                'read_count': Decimal
+            },
             ...
-        ],
+        },
         ...
     }
 
@@ -147,7 +160,7 @@ def parse_nodetool_output(lines):
     - read_count: The total number of local reads recorded
 
     Assumes that each table block starts after a line "Keyspace : <ks>" and "Table: <tablename>"
-    When all data is collected for a table, it is appended to the keyspace's list.
+    When all data is collected for a table, it is stored in the keyspace's table map.
     """
     data = {}
     current_keyspace = None
@@ -168,7 +181,7 @@ def parse_nodetool_output(lines):
                 current_keyspace = parts[1].strip()
                 # Initialize the keyspace in the dictionary if new
                 if current_keyspace not in data:
-                    data[current_keyspace] = []
+                    data[current_keyspace] = {}
             else:
                 current_keyspace = None
             current_table = None
@@ -233,8 +246,12 @@ def parse_nodetool_output(lines):
                         compression_ratio is not None and
                         read_count is not None and
                         write_count is not None):
-                    data[current_keyspace].append(
-                        (current_table, space_used, compression_ratio, read_count, write_count))
+                    data[current_keyspace][current_table] = {
+                        'space_used': space_used,
+                        'compression_ratio': compression_ratio,
+                        'read_count': read_count,
+                        'write_count': write_count
+                    }
 
                     # Reset for the next table
                     current_table = None
@@ -381,44 +398,32 @@ def parse_cassandra_schema(scehma_content):
 
     return ks_info
 
-    
 
-def build_cassandra_set(tablestats_data, schema, info_data, row_size_data, status_data=None, schema_content=None, filter_keyspace=None):
+
+
+
+def build_cassandra_local_set(samples, status_data, single_keyspace=None):
     """
-    Calculate totals and build a hierarchical data structure.
+    Build a unified data structure from samples collected from multiple nodes.
     Returns a dictionary with the following structure:
     {
-        'cluster': {
-            'cluster_nodes': Decimal,
-            'total_dcs': Decimal,
-            'total_keyspaces': Decimal,
-            'total_tables': Decimal,
+        'data': {
             'keyspaces': {
                 'keyspace_name': {
-                    'total_dcs': Decimal,
-                    'total_nodes': Decimal,
-                    'type': str, #system or user
-                    'tables': {
-                        'table_name': {
-                            'keyspace_name': str,
-                            'total_dcs': Decimal,
-                            'total_nodes': Decimal,
-                            'dcs': {
-                                'datacenter_name': {  
-                                    'total_nodes': Decimal,
-                                    'total_samples': Decimal,
-                                    'node_samples': {
-                                        'node_name': {
-                                            'host': str,
-                                            'uptime_seconds': Decimal,
-                                            'compressed_bytes': Decimal,
-                                            'ratio': Decimal,
-                                            'writes': Decimal,
-                                            'reads': Decimal,
-                                            'row_size_bytes': Decimal,
-                                            'has_ttl': bool
-                                        }
-                                    }
+                    'type': 'system' or 'user',
+                    'dcs': {
+                        'dc_name': {
+                            'number_of_nodes': Decimal,
+                            'replication_factor': Decimal,
+                            'tables': {
+                                'table_name': {
+                                    'total_compressed_bytes': Decimal,
+                                    'total_uncompressed_bytes': Decimal,
+                                    'avg_row_size_bytes': Decimal,
+                                    'writes_monthly': Decimal,
+                                    'reads_monthly': Decimal,
+                                    'has_ttl': Boolean,
+                                    'sample_count': Decimal,
                                 }
                             }
                         }
@@ -429,138 +434,684 @@ def build_cassandra_set(tablestats_data, schema, info_data, row_size_data, statu
     }
     """
     result = {
-        'cluster': {
-            'cluster_nodes': Decimal(0),
-            'total_dcs': Decimal(0),
-            'total_keyspaces': Decimal(0),
-            'total_tables': Decimal(0),
+        'data': {
+            'keyspaces': {}
+        }
+    }
+   
+    # Process each datacenter's samples
+    for dc_name, dc_data in samples.items():
+        for node_id, node_data in dc_data['nodes'].items():
+            tablestats_data = node_data['tablestats_data']
+            schema = node_data['schema']
+            info_data = node_data['info_data']
+            row_size_data = node_data['row_size_data']
+            
+            uptime_seconds = info_data['uptime_seconds']
+            # Process each keyspace
+            for keyspace_name, keyspace_data in tablestats_data.items():
+                # Skip if filtering for a single keyspace
+                if single_keyspace and keyspace_name != single_keyspace:
+                    continue
+
+                # Initialize keyspace structure if it doesn't exist
+                if keyspace_name not in result['data']['keyspaces']:
+                    result['data']['keyspaces'][keyspace_name] = {
+                        'type': 'system' if keyspace_name in system_keyspaces else 'user',
+                        'dcs': {}
+                    }
+
+                number_of_nodes = status_data['datacenters'][dc_name]['node_count']
+
+                if keyspace_name in schema:
+                    replication_factor = schema[keyspace_name]['datacenters'][dc_name]
+                else:
+                    replication_factor = REPLICATION_FACTOR
+
+                # Initialize datacenter structure if it doesn't exist
+                if dc_name not in result['data']['keyspaces'][keyspace_name]['dcs']:
+                    result['data']['keyspaces'][keyspace_name]['dcs'][dc_name] = {
+                        'number_of_nodes': number_of_nodes,
+                        'replication_factor': replication_factor,
+                        'tables': {}
+                    }
+
+                # Process each table in the keyspace
+                for table_name, table_data in keyspace_data.items():
+                    # Initialize table structure if it doesn't exist
+                    if table_name not in result['data']['keyspaces'][keyspace_name]['dcs'][dc_name]['tables']:
+                        result['data']['keyspaces'][keyspace_name]['dcs'][dc_name]['tables'][table_name] = {
+                            'total_compressed_bytes': Decimal(0),
+                            'total_uncompressed_bytes': Decimal(0),
+                            'avg_row_size_bytes': Decimal(0),
+                            'writes_monthly': Decimal(0),
+                            'reads_monthly': Decimal(0),
+                            'has_ttl': False,
+                            'dcs': {}
+                        }
+
+                    # Get table data
+                    space_used = table_data['space_used']  # compressed bytes
+                    ratio = table_data['compression_ratio'] if table_data['space_used'] > 0 else Decimal(1)
+                    read_count = table_data['read_count']
+                    write_count = table_data['write_count']
+
+                    # Calculate uncompressed size
+                    uncompressed_size = space_used / ratio
+
+                    if table_name in result['data']['keyspaces'][keyspace_name]['dcs'][dc_name]['tables'].keys():
+                        # Get row size and TTL info
+                        fully_qualified_table_name = f"{keyspace_name}.{table_name}"
+                        if fully_qualified_table_name in row_size_data:
+                            avg_str = row_size_data[fully_qualified_table_name].get('average', '0 bytes')
+                            avg_number_str = avg_str.split()[0]
+                            average_bytes = Decimal(avg_number_str)
+                            ttl_str = row_size_data[fully_qualified_table_name].get('default-ttl', 'y')
+                            has_ttl = (ttl_str.strip() == 'n')
+                        else:
+                            has_ttl = False
+                            average_bytes = Decimal(1)
+                        result['data']['keyspaces'][keyspace_name]['dcs'][dc_name]['tables'][table_name] = {
+                            'total_compressed_bytes': Decimal(0),
+                            'total_uncompressed_bytes': Decimal(0),
+                            'avg_row_size_bytes': Decimal(0),
+                            'writes_monthly': Decimal(0),
+                            'reads_monthly': Decimal(0),
+                            'has_ttl': has_ttl,
+                            'sample_count': Decimal(0)
+                        }                    
+                    
+                    # Update table data
+                    table = result['data']['keyspaces'][keyspace_name]['dcs'][dc_name]['tables'][table_name]
+                    table['total_compressed_bytes'] += space_used
+                    table['total_uncompressed_bytes'] += uncompressed_size
+                    table['avg_row_size_bytes'] = average_bytes
+                    table['writes_monthly'] += write_count/uptime_seconds * SECONDS_PER_MONTH
+                    table['reads_monthly'] += read_count/uptime_seconds * SECONDS_PER_MONTH
+                    table['has_ttl'] = has_ttl
+                    table['sample_count'] += Decimal(1)
+
+                
+                
+
+            # Add missing datacenters to the keyspace data
+            '''for keyspace_name, keyspace_data in result['data']['keyspaces'].items():
+                for dc_name, dc_data in samples.items():
+                    for node_id, node_data in dc_data['nodes'].items():
+                        schema = node_data['schema']
+                        if keyspace_name in schema:
+                            for replicated_dc_name, replicated_dc in schema[keyspace_name]['datacenters'].items():
+                                if replicated_dc_name not in keyspace_data['dcs']:
+                                    keyspace_data['dcs'][replicated_dc_name] = {
+                                        'number_of_nodes': status_data['datacenters'][replicated_dc_name]['node_count'],
+                                        'replication_factor': replicated_dc,
+                                        'tables': {}
+                                    }'''
+
+    return result
+
+def build_keyspaces_set(cassandra_set, region_map):
+    """
+    Calculate totals and build a hierarchical data structure.
+    Returns a dictionary with the following structure:
+
+    {
+        'data': {
+            'keyspaces': {
+                'keyspace_name': {
+                    'regions': {
+                        'region_name': {
+                            'tables': {
+                                'table_name': {
+                                    'write_units_monthly': Decimal,
+                                    'read_units_monthly': Decimal,
+                                    'ttl_units_monthly': Decimal,
+                                    'storage_bytes': Decimal,
+                                    'backups-pitr': Boolean,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+    result = {
+        'data': {
             'keyspaces': {}
         }
     }
 
-    # Get current node info from info_data
-    current_dc_from_info = info_data.get('dc', 'default')
-    node_id = info_data.get('id', 'default')
-    uptime_seconds = info_data.get('uptime_seconds', Decimal(1))
-
-    # Initialize cluster-level statistics from status_data
-    if status_data and 'datacenters' in status_data:
-        total_cluster_nodes = Decimal(0)
-        for dc_name, dc_info in status_data['datacenters'].items():
-            node_count = Decimal(dc_info.get('node_count', 0))
-            total_cluster_nodes += node_count
-        
-        result['cluster']['cluster_nodes'] = total_cluster_nodes
-        result['cluster']['total_dcs'] = Decimal(len(status_data['datacenters']))
-    else:
-        result['cluster']['cluster_nodes'] = Decimal(1)
-        result['cluster']['total_dcs'] = Decimal(1)
-
-    # Process each keyspace and its tables
-    for keyspace, tables in tablestats_data.items():
-        # Skip if we're filtering for a specific keyspace
-        if filter_keyspace and keyspace != filter_keyspace:
+   
+    # Process each keyspace
+    for keyspace_name, keyspace_data in cassandra_set['data']['keyspaces'].items():
+        # Skip system keyspaces
+        if keyspace_data['type'] == 'system':
             continue
 
-        # Determine if this is a system keyspace
-        keyspace_type = 'system' if keyspace in system_keyspaces else 'user'
-
-        #get the current dcs from the schema if available, otherwise use the dc from the info_data
-        current_dcs_from_schema = schema.get(keyspace, {}).get('datacenters', {}).keys() if schema else [info_data.get('dc', 'default')]
-
-        #if the keyspace is a system keyspace and the schema is empty, use the datacenters from the status_data
-        if len(current_dcs_from_schema) == 0 and keyspace_type == 'system':
-            current_dcs_from_schema = status_data['datacenters'].keys()
-
-        #get the total nodes for the keyspace based on the current_dcs. Check status_data for the nodes
-        total_nodes = 0
-        for dc in current_dcs_from_schema:
-            total_nodes += status_data['datacenters'][dc].get('node_count', 0)
-
         # Initialize keyspace structure
-        result['cluster']['keyspaces'][keyspace] = {
-            'total_dcs': len(current_dcs_from_schema),
-            'total_nodes': total_nodes,
-            'type': keyspace_type,
-            'tables': {}
+        result['data']['keyspaces'][keyspace_name] = {
+            'regions': {}
         }
 
-        # Process each table in the keyspace
-        for table, space_used, ratio, read_count, write_count in tables:
-            # Get row size data if available
-            fully_qualified_table_name = f"{keyspace}.{table}"
-            row_size_info = row_size_data.get(fully_qualified_table_name, {})
+        # Process each datacenter as a region
+        for dc_name, dc_data in keyspace_data['dcs'].items():
+            #region_name = dc_name
             
-            # Extract average row size, defaulting to 0 if not found
-            avg_str = row_size_info.get('average', '0 bytes')
-            avg_number_str = avg_str.split()[0]
-            has_ttl = row_size_info.get('default-ttl', 'y').strip() == 'n'
+            region_name = region_map[dc_name]
+            # Initialize region structure if it doesn't exist
+            if region_name not in result['data']['keyspaces'][keyspace_name]['regions']:
+                result['data']['keyspaces'][keyspace_name]['regions'][region_name] = {
+                    'tables': {}
+                }
 
-            if keyspace_type == 'system':
-                average_bytes = 100 #TODO change row size sample for system keyspaces
-            else:
-                try:
-                    average_bytes = Decimal(avg_number_str)
-                except (ValueError, IndexError):
-                    average_bytes = Decimal(0)
+            # Process each table in the datacenter
+            for table_name, table_data in dc_data['tables'].items():
+                
+                # Calculate Keyspaces units
+                row_size_bytes = table_data['avg_row_size_bytes']
+                has_ttl = table_data['has_ttl']
+                replication_factor = dc_data.get('replication_factor', REPLICATION_FACTOR)
+                number_of_nodes = dc_data['number_of_nodes']
+                number_of_samples = table_data['sample_count']
 
-            # Initialize table structure
-            result['cluster']['keyspaces'][keyspace]['tables'][table] = {
-                'keyspace_name': keyspace,
-                'total_dcs': len(current_dcs_from_schema),
-                'total_nodes': total_nodes,
-                'dcs': {}
-            }
+                # Calculate write units
+                write_units_per_write = Decimal(1) if row_size_bytes < WRITE_UNIT_SIZE else math.ceil(row_size_bytes / WRITE_UNIT_SIZE)
+                write_units_monthly = table_data['writes_monthly']/number_of_samples * write_units_per_write * number_of_nodes / replication_factor
 
-            # Add data for all datacenters
-            if status_data and 'datacenters' in status_data:
-                for dc_name, dc_info in status_data['datacenters'].items():
-                    if dc_name in current_dcs_from_schema:
-                        node_count = Decimal(dc_info.get('node_count', 0))
-                        result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name] = {
-                            'total_nodes': node_count,
-                            'total_samples': Decimal(0),
-                            'node_samples': {}
-                        }
-                    
-                        # If this is the current datacenter, add the current node's data
-                        if dc_name == current_dc_from_info:
-                            result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name]['total_samples'] += Decimal(1)
-                            result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][dc_name]['node_samples'][node_id] = {
-                                'host': node_id,
-                                'uptime_seconds': uptime_seconds,
-                                'compressed_bytes': space_used,
-                                'ratio': ratio,
-                                'writes': write_count,
-                                'reads': read_count,
-                                'row_size_bytes': average_bytes,
-                                'has_ttl': has_ttl
+                # Calculate read units
+                read_units_per_read = Decimal(1) if row_size_bytes < READ_UNIT_SIZE else math.ceil(row_size_bytes / READ_UNIT_SIZE)
+                read_units_monthly = table_data['reads_monthly']/number_of_samples * read_units_per_read * number_of_nodes / ((replication_factor -1) if replication_factor - 1 > 0 else 1)
+
+                # Calculate TTL units (same as writes if TTL is enabled)
+                ttl_units_monthly = write_units_monthly if has_ttl else Decimal(0)
+
+                # Calculate storage bytes (uncompressed)
+                storage_bytes = table_data['total_uncompressed_bytes']/number_of_samples * number_of_nodes / replication_factor
+
+                # Store table data
+                result['data']['keyspaces'][keyspace_name]['regions'][region_name]['tables'][table_name] = {
+                    'write_units_monthly': write_units_monthly,
+                    'read_units_monthly': read_units_monthly,
+                    'ttl_units_monthly': ttl_units_monthly,
+                    'storage_bytes': storage_bytes,
+                    'backups-pitr': True  # Default to True for all tables
+                }
+
+    return result
+
+def build_keyspaces_pricing(keyspaces_set, mcs_json=None):
+    """
+    Build a pricing data structure using region-specific rates from mcs_json.
+    Returns a dictionary with the following structure:
+    {
+        'data': {
+            'keyspaces': {
+                'keyspace_name': {
+                    'regions': {
+                        'region_name': {
+                            'tables': {
+                                'table_name': {
+                                    'ondemand-writes': Decimal,
+                                    'ondemand-reads': Decimal,
+                                    'ttl-deletes': Decimal,
+                                    'storage': Decimal,
+                                    'backup-pitr': Decimal
+                                }
                             }
-            else:
-                # If no status data, just add the current datacenter
-                result['cluster']['keyspaces'][keyspace]['tables'][table]['dcs'][current_dc] = {
-                    'total_nodes': Decimal(1),
-                    'total_samples': Decimal(1),
-                    'node_samples': {
-                        node_id: {
-                            'host': node_id,
-                            'uptime_seconds': uptime_seconds,
-                            'compressed_bytes': space_used,
-                            'ratio': ratio,
-                            'writes': write_count,
-                            'reads': read_count,
-                            'row_size_bytes': average_bytes,
-                            'has_ttl': has_ttl
                         }
                     }
                 }
+            }
+        }
+    }
+    """
+    # Helper to get price from mcs_json for a region and key
+    def get_price(region, key, default=Decimal('0')):
+        #try:
+       #     return Decimal(mcs_json['regions'][region][key]['price'])
+       # except Exception:
+        return default
 
-    # Update cluster-level statistics
-    result['cluster']['total_keyspaces'] = Decimal(len(result['cluster']['keyspaces']))
-    total_tables = sum(Decimal(len(ks['tables'])) for ks in result['cluster']['keyspaces'].values())
-    result['cluster']['total_tables'] = total_tables
+    # Try to map region names from keyspaces_set to mcs_json regions
+    #mcs_regions = list(mcs_json['regions'].keys())
+    #def map_region(region_name):
+        # Try exact match first
+    #    if region_name in mcs_regions:
+    #        return region_name
+        # Try partial match (e.g., region1 -> US West (Oregon))
+    #    for mcs_region in mcs_regions:
+    #        if region_name.lower() in mcs_region.lower() or mcs_region.lower() in region_name.lower():
+    #            return mcs_region
+        # Fallback: first region
+    #    return mcs_regions['US East (N. Virginia)']
 
+    result = {'data': {'keyspaces': {}}}
+    for keyspace_name, keyspace_data in keyspaces_set['data']['keyspaces'].items():
+        result['data']['keyspaces'][keyspace_name] = {'regions': {}}
+        for region_name, region_data in keyspace_data['regions'].items():
+            # Map region name to mcs_json region
+            #mcs_region = map_region(region_name)
+            mcs_region = region_name
+            result['data']['keyspaces'][keyspace_name]['regions'][region_name] = {'tables': {}}
+            for table_name, table_data in region_data['tables'].items():
+                write_units_monthly = table_data['write_units_monthly']
+                read_units_monthly = table_data['read_units_monthly']
+                ttl_units_monthly = table_data['ttl_units_monthly']
+                storage_bytes = table_data['storage_bytes']
+                backups = table_data['backups-pitr']
+
+                # Get region-specific prices
+                ondemand_write_price = get_price(mcs_region, 'On-Demand Write Units', Decimal('0.0000006250'))
+                ondemand_read_price = get_price(mcs_region, 'On-Demand Read Units', Decimal('0.0000001250'))
+                price_write = get_price(mcs_region, 'Provisioned Write Units', Decimal('0.0006500000'))
+                price_read = get_price(mcs_region, 'Provisioned Read Units', Decimal('0.0001300000'))
+                price_ttl = get_price(mcs_region, 'Time to Live', Decimal('0.0000002750'))
+                price_storage = get_price(mcs_region, 'AmazonMCS - Indexed DataStore per GB-Mo', Decimal('0.25'))
+                price_pitr = get_price(mcs_region, 'Point-In-Time-Restore PITR Backup Storage per GB-Mo', Decimal('0.20'))
+
+                # Calculate costs
+                ondemand_writes = write_units_monthly * ondemand_write_price
+                ondemand_reads = read_units_monthly * ondemand_read_price
+                ondemand_ec_reads = read_units_monthly * ondemand_read_price/2 
+                ttl_deletes = ttl_units_monthly * price_ttl
+                
+                provisioned_writes = write_units_monthly/SECONDS_PER_MONTH * HOURS_PER_MONTH * price_write
+                provisioned_reads = read_units_monthly/SECONDS_PER_MONTH * HOURS_PER_MONTH * price_read
+                provisioned_ec_reads = read_units_monthly/SECONDS_PER_MONTH  * HOURS_PER_MONTH/2 * price_read
+                
+                storage_cost = storage_bytes / GIGABYTE * price_storage
+                backup_pitr_cost = storage_bytes / GIGABYTE * price_pitr if (backups)  else 0
+
+                result['data']['keyspaces'][keyspace_name]['regions'][region_name]['tables'][table_name] = {
+                    'ondemand-writes': ondemand_writes,
+                    'ondemand-reads': ondemand_reads,
+                    'ondemand-ec-reads': ondemand_ec_reads,
+                    'provisioned-writes': provisioned_writes,
+                    'provisioned-reads': provisioned_reads,
+                    'provisioned-ec-reads': provisioned_ec_reads,
+                    'ttl-deletes': ttl_deletes,
+                    'storage': storage_cost,
+                    'backup-pitr': backup_pitr_cost
+                }
     return result
+
+def print_keyspaces_sizes(keyspaces_set):
+    """
+    Print keyspaces sizes similar to the print_rows2 function, print_cassandra_sizes, but with keyspaces_set info. You should print tables,
+    then keyspaces, then cluster. Keyspaces are aggregets of all tables and cluster is aggregate of all tables. 
+    {
+        'data': {
+            'keyspaces': {
+                'keyspace_name': {
+                    'regions': {
+                        'region_name': {
+                            'tables': {
+                                'table_name': {
+                                    'write_units_monthly': Decimal,
+                                    'read_units_monthly': Decimal,
+                                    'ttl_units_monthly': Decimal,
+                                    'storage_bytes': Decimal,
+                                    'backups-pitr': Boolean,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+    headers = ["Keyspace", "Table", "Region", "Storage Bytes", "Write Units p/s", "Read Units p/s", "TTL Units p/s", "Backup-PITR"]
+    
+    # Initialize totals
+    cluster_total = {
+        'storage_bytes': Decimal(0),
+        'write_units_monthly': Decimal(0),
+        'read_units_monthly': Decimal(0),
+        'ttl_units_monthly': Decimal(0)
+    }
+    
+    table_rows = []
+    keyspace_rows = []
+    
+    # Process each keyspace
+    for keyspace_name, keyspace_data in keyspaces_set['data']['keyspaces'].items():
+        keyspace_total = {
+            'storage_bytes': Decimal(0),
+            'write_units_monthly': Decimal(0),
+            'read_units_monthly': Decimal(0),
+            'ttl_units_monthly': Decimal(0)
+        }
+        
+        # Process each region in the keyspace
+        for region_name, region_data in keyspace_data['regions'].items():
+            # Process each table in the region
+            for table_name, table_data in region_data['tables'].items():
+                # Create table row
+                row = [
+                    keyspace_name,
+                    table_name,
+                    region_name,
+                    f"{table_data['storage_bytes']/GIGABYTE:,.0f}",
+                    f"{table_data['write_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+                    f"{table_data['read_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+                    f"{table_data['ttl_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+                    "Yes" if table_data['backups-pitr'] else "No"
+                ]
+                table_rows.append(row)
+                
+                # Update keyspace totals
+                keyspace_total['storage_bytes'] += table_data['storage_bytes']
+                keyspace_total['write_units_monthly'] += table_data['write_units_monthly']
+                keyspace_total['read_units_monthly'] += table_data['read_units_monthly']
+                keyspace_total['ttl_units_monthly'] += table_data['ttl_units_monthly']
+        
+        # Create keyspace summary row
+        keyspace_row = [
+            keyspace_name,
+            '',  # No table name for keyspace summary
+            '',  # No region for keyspace summary
+            f"{keyspace_total['storage_bytes']/GIGABYTE:,.0f}",
+            f"{keyspace_total['write_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+            f"{keyspace_total['read_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+            f"{keyspace_total['ttl_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+            ''   # No backup-pitr for keyspace summary
+        ]
+        keyspace_rows.append(keyspace_row)
+        
+        # Update cluster totals
+        cluster_total['storage_bytes'] += keyspace_total['storage_bytes']
+        cluster_total['write_units_monthly'] += keyspace_total['write_units_monthly']
+        cluster_total['read_units_monthly'] += keyspace_total['read_units_monthly']
+        cluster_total['ttl_units_monthly'] += keyspace_total['ttl_units_monthly']
+    
+    # Create cluster summary row
+    cluster_row = [
+        'CLUSTER TOTAL',
+        '',  # No table name for cluster summary
+        '',  # No region for cluster summary
+        f"{cluster_total['storage_bytes']/GIGABYTE:,.0f}",
+        f"{cluster_total['write_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+        f"{cluster_total['read_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+        f"{cluster_total['ttl_units_monthly']/SECONDS_PER_MONTH:,.0f}",
+        ''   # No backup-pitr for cluster summary
+    ]
+    
+    # Print the tables
+    print("\n-----Table Details-----")
+    print(tabulate(table_rows, headers=headers, tablefmt="grid", 
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "center")))
+    
+    print("\n-----Keyspace Summary-----")
+    print(tabulate(keyspace_rows, headers=headers, tablefmt="grid",
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "center")))
+    
+    print("\n-----Cluster Summary-----")
+    print(tabulate([cluster_row], headers=headers, tablefmt="grid",
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "center")))
+
+def print_cassnadra_sizes(cassandra_set):
+    """
+    Print Cassandra sizes similar to the print_rows2 function, but with cassandra_set info. You should print tables,
+    then keyspaces, then cluster. Keyspaces are aggregets of all tables and cluster is aggregate of all tables. 
+    aggregates for keyspace and account do not need to include ratio, row size, samople, or ttl. 
+    """
+    headers = ["Keyspace", "Table", "Region", "Compressed GB", "Ratio", "Uncompressed GB", "writes monthly", "reads monthly", "row size", "ttl", "sample count"]
+    
+    # Initialize totals
+    cluster_total = {
+        'compressed_gb': Decimal(0),
+        'uncompressed_gb': Decimal(0),
+        'writes_monthly': Decimal(0),
+        'reads_monthly': Decimal(0)
+    }
+    
+    table_rows = []
+    keyspace_rows = []
+    
+    # Process each keyspace
+    for keyspace_name, keyspace_data in cassandra_set['data']['keyspaces'].items():
+        keyspace_total = {
+            'compressed_gb': Decimal(0),
+            'uncompressed_gb': Decimal(0),
+            'writes_monthly': Decimal(0),
+            'reads_monthly': Decimal(0)
+        }
+        
+        # Process each datacenter in the keyspace
+        for dc_name, dc_data in keyspace_data['dcs'].items():
+            # Process each table in the datacenter
+            for table_name, table_data in dc_data['tables'].items():
+                # Calculate GB values
+                compressed_gb = table_data['total_compressed_bytes'] / GIGABYTE
+                uncompressed_gb = table_data['total_uncompressed_bytes'] / GIGABYTE
+                ratio = compressed_gb / uncompressed_gb if uncompressed_gb > 0 else Decimal(0)
+                
+                # Create table row
+                row = [
+                    keyspace_name,
+                    table_name,
+                    dc_name,
+                    f"{compressed_gb:,.2f}",
+                    f"{ratio:,.2f}",
+                    f"{uncompressed_gb:,.2f}",
+                    f"{table_data['writes_monthly']:,.0f}",
+                    f"{table_data['reads_monthly']:,.0f}",
+                    f"{table_data['avg_row_size_bytes']:,.0f}",
+                    "Yes" if table_data['has_ttl'] else "No",
+                    f"{table_data['sample_count']:,.0f}"
+                ]
+                table_rows.append(row)
+                
+                # Update keyspace totals
+                keyspace_total['compressed_gb'] += compressed_gb
+                keyspace_total['uncompressed_gb'] += uncompressed_gb
+                keyspace_total['writes_monthly'] += table_data['writes_monthly']
+                keyspace_total['reads_monthly'] += table_data['reads_monthly']
+        
+        # Create keyspace summary row
+        keyspace_ratio = keyspace_total['compressed_gb'] / keyspace_total['uncompressed_gb'] if keyspace_total['uncompressed_gb'] > 0 else Decimal(0)
+        keyspace_row = [
+            keyspace_name,
+            '',  # No table name for keyspace summary
+            '',  # No datacenter for keyspace summary
+            f"{keyspace_total['compressed_gb']:,.2f}",
+            f"{keyspace_ratio:,.2f}",
+            f"{keyspace_total['uncompressed_gb']:,.2f}",
+            f"{keyspace_total['writes_monthly']:,.0f}",
+            f"{keyspace_total['reads_monthly']:,.0f}",
+            '',  # No row size for keyspace summary
+            '',  # No TTL for keyspace summary
+            ''   # No sample count for keyspace summary
+        ]
+        keyspace_rows.append(keyspace_row)
+        
+        # Update cluster totals
+        cluster_total['compressed_gb'] += keyspace_total['compressed_gb']
+        cluster_total['uncompressed_gb'] += keyspace_total['uncompressed_gb']
+        cluster_total['writes_monthly'] += keyspace_total['writes_monthly']
+        cluster_total['reads_monthly'] += keyspace_total['reads_monthly']
+    
+    # Create cluster summary row
+    cluster_ratio = cluster_total['compressed_gb'] / cluster_total['uncompressed_gb'] if cluster_total['uncompressed_gb'] > 0 else Decimal(0)
+    cluster_row = [
+        'CLUSTER TOTAL',
+        '',  # No table name for cluster summary
+        '',  # No datacenter for cluster summary
+        f"{cluster_total['compressed_gb']:,.2f}",
+        f"{cluster_ratio:,.2f}",
+        f"{cluster_total['uncompressed_gb']:,.2f}",
+        f"{cluster_total['writes_monthly']:,.0f}",
+        f"{cluster_total['reads_monthly']:,.0f}",
+        '',  # No row size for cluster summary
+        '',  # No TTL for cluster summary
+        ''   # No sample count for cluster summary
+    ]
+    
+    # Print the tables
+    print("\n-----Table Details-----")
+    print(tabulate(table_rows, headers=headers, tablefmt="grid", 
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "center", "right")))
+    
+    print("\n-----Keyspace Summary-----")
+    print(tabulate(keyspace_rows, headers=headers, tablefmt="grid",
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "center", "right")))
+    
+    print("\n-----Cluster Summary-----")
+    print(tabulate([cluster_row], headers=headers, tablefmt="grid",
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "center", "right")))
+
+def print_rows2(keyspaces_pricing):
+    """
+    Print the data in a formatted table using the totals dictionary.
+   
+    
+    {
+        'data': {
+            'keyspaces': {
+                'keyspace_name': {
+                    'regions': {
+                        'region_name': {
+                            'tables': {
+                                'table_name': {
+                                    'ondemand-writes': Decimal,
+                                    'ondemand-reads': Decimal,
+                                    'ttl-deletes': Decimal,
+                                    'storage': Decimal,
+                                    'backup-pitr': Decimal
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } """
+
+    # Table headers
+    table_headers = [
+        "Keyspace", "Table", "Region", "Keyspaces GB",
+        "On-Demand Writes", "On-Demand Reads", "On-Demand EC Reads",
+        "Provisioned Writes", "Provisioned Reads", "Provisioned EC Reads",
+        "TTL deletes", "Backup PITR"
+    ]
+    
+    
+    account_total = {
+        'storage': Decimal(0),
+        'ondemand-writes': Decimal(0),
+        'ondemand-reads': Decimal(0),
+        'ondemand-ec-reads': Decimal(0),
+        'provisioned-writes': Decimal(0),
+        'provisioned-reads': Decimal(0),
+        'provisioned-ec-reads': Decimal(0),
+        'ttl-deletes': Decimal(0),
+        'backup-pitr': Decimal(0)
+    }
+    account_rows = []
+    table_rows = []
+    keyspace_rows = []
+    for keyspace_name, keyspace_data in keyspaces_pricing['data']['keyspaces'].items():
+        keyspace_total = {
+            'storage': Decimal(0),
+            'ondemand-writes': Decimal(0),
+            'ondemand-reads': Decimal(0),
+            'ondemand-ec-reads': Decimal(0),
+            'provisioned-writes': Decimal(0),
+            'provisioned-reads': Decimal(0),
+            'provisioned-ec-reads': Decimal(0),
+            'ttl-deletes': Decimal(0),
+            'backup-pitr': Decimal(0)
+        }
+        
+        for region_name, region_data in keyspace_data['regions'].items():
+            for table_name, table_data in region_data['tables'].items():
+
+                row = [
+                keyspace_name,
+                table_name,
+                region_name,
+                f"{table_data['storage']:,.0f}",
+                f"{table_data['ondemand-writes']:,.2f}",
+                f"{table_data['ondemand-reads']:.5f}",
+                f"{table_data['ondemand-ec-reads']:,.2f}",
+                f"{table_data['provisioned-writes']:,.2f}",
+                f"{table_data['provisioned-reads']:.5f}",
+                f"{table_data['provisioned-ec-reads']:,.2f}",
+                f"{table_data['ttl-deletes']:,.2f}",
+                f"{table_data['backup-pitr']:,.0f}"
+                ]
+
+                table_rows.append(row)
+                keyspace_total['storage'] += table_data['storage']
+                keyspace_total['ondemand-writes'] += table_data['ondemand-writes']
+                keyspace_total['ondemand-reads'] += table_data['ondemand-reads']
+                keyspace_total['ondemand-ec-reads'] += table_data['ondemand-ec-reads']
+                keyspace_total['provisioned-writes'] += table_data['provisioned-writes']
+                keyspace_total['provisioned-reads'] += table_data['provisioned-reads']
+                keyspace_total['provisioned-ec-reads'] += table_data['provisioned-ec-reads']
+                keyspace_total['ttl-deletes'] += table_data['ttl-deletes']
+                keyspace_total['backup-pitr'] += table_data['backup-pitr']
+
+        keyspace_row = [
+            keyspace_name,
+            '',
+            '',
+            f"{keyspace_total['storage']:,.0f}",
+            f"{keyspace_total['ondemand-writes']:,.2f}",
+            f"{keyspace_total['ondemand-reads']:.5f}",
+            f"{keyspace_total['ondemand-ec-reads']:,.2f}",
+            f"{keyspace_total['provisioned-writes']:,.2f}",
+            f"{keyspace_total['provisioned-reads']:.5f}",
+            f"{keyspace_total['provisioned-ec-reads']:,.2f}",
+            f"{keyspace_total['ttl-deletes']:,.2f}",
+            f"{keyspace_total['backup-pitr']:,.0f}"
+                ]
+        
+        keyspace_rows.append(keyspace_row)
+        account_total['storage'] += keyspace_total['storage']
+        account_total['ondemand-writes'] += keyspace_total['ondemand-writes']
+        account_total['ondemand-reads'] += keyspace_total['ondemand-reads']
+        account_total['ondemand-ec-reads'] += keyspace_total['ondemand-ec-reads']
+        account_total['provisioned-writes'] += keyspace_total['provisioned-writes']
+        account_total['provisioned-reads'] += keyspace_total['provisioned-reads']
+        account_total['provisioned-ec-reads'] += keyspace_total['provisioned-ec-reads']
+        account_total['ttl-deletes'] += keyspace_total['ttl-deletes']
+        account_total['backup-pitr'] += keyspace_total['backup-pitr']
+    
+    account_row = [
+                'account',
+                '',
+                '',
+                f"{account_total['storage']:,.0f}",
+                f"{account_total['ondemand-writes']:,.2f}",
+                f"{account_total['ondemand-reads']:.5f}",
+                f"{account_total['ondemand-ec-reads']:,.2f}",
+                f"{account_total['provisioned-writes']:,.2f}",
+                f"{account_total['provisioned-reads']:.5f}",
+                f"{account_total['provisioned-ec-reads']:,.2f}",
+                f"{account_total['ttl-deletes']:,.2f}",
+                f"{account_total['backup-pitr']:,.0f}"
+                ]
+    account_rows.append(account_row)
+
+    print("-----Table-----")
+    print(tabulate(table_rows, headers=table_headers, tablefmt="grid", 
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "right", "right")))
+
+    print("-----Keyspace-----")
+    print(tabulate(keyspace_rows, headers=table_headers, tablefmt="grid", 
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "right", "right")))
+
+    print("-----Account-----")
+    print(tabulate(account_rows, headers=table_headers, tablefmt="grid", 
+                  colalign=("left", "left", "left", "right", "right", "right", "right", "right", "right", "right", "right")))
+
+    
+
+
 
 def calculate_totals(data, uptime_sec, row_size_data, number_of_nodes=Decimal(1), filter_keyspace=None):
     """
@@ -869,7 +1420,7 @@ def print_rows(report_name, totals):
     # Print the main table
     print("\nDetailed Table Statistics:")
     print(tabulate(all_rows, headers=table_headers, tablefmt="grid", 
-                  colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right", "right", "right")))
+                  colalign=("left", "left", "right", "right", "right", "right", "right", "right", "right")))
 
     # Print summary statistics
     summary_headers = ["Category", "Cassandra size (GB)", "Ratio", "Keyspaces size(GB)", "Writes p/s", "Reads p/s", "TTL deletes p/s", "Cass Network Traffic GB", "Cass Network Repair GB"]
@@ -1049,13 +1600,38 @@ def main():
     
     uptime_seconds = info_data['uptime_seconds']
 
-    totals = calculate_totals(tablestats_data, uptime_seconds, row_size_data, number_of_nodes, single_keyspace)
+   
     
-    print_rows(report_name, totals)
+    #totals = calculate_totals(tablestats_data, uptime_seconds, row_size_data, number_of_nodes, single_keyspace)
+    
+    #print_rows(report_name, totals)
     # Print the compiled data
-    res = build_cassandra_set(tablestats_data, schema, info_data, row_size_data, status_data, schema_content, single_keyspace)
+   
+    
+    samples = {}
+    samples[info_data['dc']] = {
+        'nodes': {}
+    }
+    samples[info_data['dc']]['nodes'][info_data['id']] = {
+        'tablestats_data': tablestats_data,
+        'schema': schema,
+        'info_data': info_data,
+        'row_size_data': row_size_data
+    }
+    region_map = {info_data['dc']: "US East (N. Virginia)"}
+    
+    res = build_cassandra_local_set(samples, status_data, single_keyspace)
 
-    #print(json.dumps(decimal_to_str(res), indent=4))
+    kes_res = build_keyspaces_set(res, region_map)
+
+    print("------Cassandra Sizes------")
+    print_cassnadra_sizes(res)
+
+    print("------Keyspaces Sizes------")
+    print_keyspaces_sizes(kes_res)
+
+    print("------Keyspaces Pricing------")
+    print_rows2(build_keyspaces_pricing(kes_res))
 
 if __name__ == "__main__":
     main()
