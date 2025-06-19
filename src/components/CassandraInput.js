@@ -7,7 +7,8 @@ import {
     Container,
     Header,
     Select,
-    Button
+    Button,
+    Alert
 } from '@cloudscape-design/components';
 import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo } from './ParsingHelpers';
 import { awsRegions } from '../constants/regions';
@@ -37,6 +38,10 @@ function CassandraInput() {
     const [infoData, setInfoData] = useState({});
     const [schemaData, setSchemaData] = useState({});
     const [rowSizeData, setRowSizeData] = useState({});
+    const [tablestatsValidation, setTablestatsValidation] = useState({});
+    const [infoValidation, setInfoValidation] = useState({});
+    const [schemaValidation, setSchemaValidation] = useState({});
+    const [rowSizeValidation, setRowSizeValidation] = useState({});
 
     const fileUploadI18nStrings = {
         uploadButtonText: () => "Choose file",
@@ -84,6 +89,10 @@ function CassandraInput() {
                 const initialInfo = {};
                 const initialSchema = {};
                 const initialRowSize = {};
+                const initialTablestatsValidation = {};
+                const initialInfoValidation = {};
+                const initialSchemaValidation = {};
+                const initialRowSizeValidation = {};
                 newDatacenters.forEach(dc => {
                     initialRegions[dc.name] = null;
                     initialFiles[dc.name] = {
@@ -96,6 +105,10 @@ function CassandraInput() {
                     initialInfo[dc.name] = null;
                     initialSchema[dc.name] = null;
                     initialRowSize[dc.name] = null;
+                    initialTablestatsValidation[dc.name] = null;
+                    initialInfoValidation[dc.name] = null;
+                    initialSchemaValidation[dc.name] = null;
+                    initialRowSizeValidation[dc.name] = null;
                 });
                 setRegions(initialRegions);
                 setDatacenterFiles(initialFiles);
@@ -103,6 +116,10 @@ function CassandraInput() {
                 setInfoData(initialInfo);
                 setSchemaData(initialSchema);
                 setRowSizeData(initialRowSize);
+                setTablestatsValidation(initialTablestatsValidation);
+                setInfoValidation(initialInfoValidation);
+                setSchemaValidation(initialSchemaValidation);
+                setRowSizeValidation(initialRowSizeValidation);
 
                 console.log('Parsed status data:', statusData);
                 console.log('New datacenters:', newDatacenters);
@@ -137,21 +154,55 @@ function CassandraInput() {
                 const content = await file.text();
                 const parsedData = parse_nodetool_tablestats(content);
                 console.log('Parsed tablestats data:', parsedData);
+                
                 if (!parsedData || Object.keys(parsedData).length === 0) {
                     console.error('No valid tablestats data found in file for datacenter:', datacenter);
-                    // You could add error state handling here if needed
+                    
+                    // Set validation error
+                    setTablestatsValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: false,
+                            message: 'No valid tablestats data found in file'
+                        }
+                    }));
                 } else {
+                    // Count total tables across all keyspaces
+                    let totalTables = 0;
+                    let totalKeysapces = Object.keys(parsedData).length 
+                    Object.values(parsedData).forEach(keyspace => {
+                        totalTables += Object.keys(keyspace).length;
+                    });
+                    
                     console.log(`Successfully parsed tablestats for ${datacenter}:`, parsedData);
+                    console.log(`Total system and user tables ${totalTables} and keyspaces ${totalKeysapces}` );
                     
                     // Store the parsed data
                     setTablestatsData(prev => ({
                         ...prev,
                         [datacenter]: parsedData
                     }));
+                    
+                    // Set validation success
+                    setTablestatsValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: true,
+                            message: `Successfully parsed ${totalTables} user definedtables from ${Object.keys(parsedData).length} keyspaces`
+                        }
+                    }));
                 }
             } catch (error) {
                 console.error(`Error parsing tablestats file for ${datacenter}:`, error);
-                // You could add error state handling here if needed
+                
+                // Set validation error
+                setTablestatsValidation(prev => ({
+                    ...prev,
+                    [datacenter]: {
+                        success: false,
+                        message: `Error parsing file: ${error.message}`
+                    }
+                }));
             }
         }
 
@@ -164,19 +215,59 @@ function CassandraInput() {
                 
                 if (!parsedData || !parsedData.uptime_seconds) {
                     console.error('No valid info data found in file for datacenter:', datacenter);
-                    // You could add error state handling here if needed
+                    
+                    // Set validation error
+                    setInfoValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: false,
+                            message: 'No valid info data found in file'
+                        }
+                    }));
                 } else {
+                    // Check if datacenter matches
+                    const fileDatacenter = parsedData.dc;
+                    const datacenterMatch = fileDatacenter === datacenter;
+                    
                     console.log(`Successfully parsed info for ${datacenter}:`, parsedData);
+                    console.log(`File datacenter: ${fileDatacenter}, Expected: ${datacenter}, Match: ${datacenterMatch}`);
                     
                     // Store the parsed data
                     setInfoData(prev => ({
                         ...prev,
                         [datacenter]: parsedData
                     }));
+                    
+                    // Set validation result
+                    if (datacenterMatch) {
+                        setInfoValidation(prev => ({
+                            ...prev,
+                            [datacenter]: {
+                                success: true,
+                                message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter: ${fileDatacenter} ✓`
+                            }
+                        }));
+                    } else {
+                        setInfoValidation(prev => ({
+                            ...prev,
+                            [datacenter]: {
+                                success: false,
+                                message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter mismatch: expected "${datacenter}" but found "${fileDatacenter}"`
+                            }
+                        }));
+                    }
                 }
             } catch (error) {
                 console.error(`Error parsing info file for ${datacenter}:`, error);
-                // You could add error state handling here if needed
+                
+                // Set validation error
+                setInfoValidation(prev => ({
+                    ...prev,
+                    [datacenter]: {
+                        success: false,
+                        message: `Error parsing file: ${error.message}`
+                    }
+                }));
             }
         }
 
@@ -189,19 +280,51 @@ function CassandraInput() {
                 
                 if (!parsedData || Object.keys(parsedData).length === 0) {
                     console.error('No valid schema data found in file for datacenter:', datacenter);
-                    // You could add error state handling here if needed
+                    
+                    // Set validation error
+                    setSchemaValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: false,
+                            message: 'No valid schema data found in file'
+                        }
+                    }));
                 } else {
+                    // Count total tables across all keyspaces
+                    let totalTables = 0;
+                    Object.values(parsedData).forEach(keyspace => {
+                        totalTables += keyspace.tables.length;
+                    });
+                    
                     console.log(`Successfully parsed schema for ${datacenter}:`, parsedData);
+                    console.log(`Total tables found: ${totalTables}`);
                     
                     // Store the parsed data
                     setSchemaData(prev => ({
                         ...prev,
                         [datacenter]: parsedData
                     }));
+                    
+                    // Set validation success
+                    setSchemaValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: true,
+                            message: `Successfully parsed ${totalTables} tables from ${Object.keys(parsedData).length} keyspaces`
+                        }
+                    }));
                 }
             } catch (error) {
                 console.error(`Error parsing schema file for ${datacenter}:`, error);
-                // You could add error state handling here if needed
+                
+                // Set validation error
+                setSchemaValidation(prev => ({
+                    ...prev,
+                    [datacenter]: {
+                        success: false,
+                        message: `Error parsing file: ${error.message}`
+                    }
+                }));
             }
         }
 
@@ -214,19 +337,48 @@ function CassandraInput() {
                 
                 if (!parsedData || Object.keys(parsedData).length === 0) {
                     console.error('No valid row size data found in file for datacenter:', datacenter);
-                    // You could add error state handling here if needed
+                    
+                    // Set validation error
+                    setRowSizeValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: false,
+                            message: 'No valid row size data found in file'
+                        }
+                    }));
                 } else {
+                    // Count total tables
+                    const totalTables = Object.keys(parsedData).length;
+                    
                     console.log(`Successfully parsed row size data for ${datacenter}:`, parsedData);
+                    console.log(`Total tables found: ${totalTables}`);
                     
                     // Store the parsed data
                     setRowSizeData(prev => ({
                         ...prev,
                         [datacenter]: parsedData
                     }));
+                    
+                    // Set validation success
+                    setRowSizeValidation(prev => ({
+                        ...prev,
+                        [datacenter]: {
+                            success: true,
+                            message: `Successfully parsed row size data for ${totalTables} tables`
+                        }
+                    }));
                 }
             } catch (error) {
                 console.error(`Error parsing row size file for ${datacenter}:`, error);
-                // You could add error state handling here if needed
+                
+                // Set validation error
+                setRowSizeValidation(prev => ({
+                    ...prev,
+                    [datacenter]: {
+                        success: false,
+                        message: `Error parsing file: ${error.message}`
+                    }
+                }));
             }
         }
     };
@@ -312,6 +464,14 @@ function CassandraInput() {
                                                 i18nStrings={fileUploadI18nStrings}
                                                 constraintText="Upload a .txt file"
                                             />
+                                            {tablestatsValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={tablestatsValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={tablestatsValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {tablestatsValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
                                         </FormField>
 
                                         <FormField
@@ -325,6 +485,14 @@ function CassandraInput() {
                                                 i18nStrings={fileUploadI18nStrings}
                                                 constraintText="Upload a .txt file"
                                             />
+                                            {infoValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={infoValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={infoValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {infoValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
                                         </FormField>
 
                                         <FormField
@@ -338,6 +506,14 @@ function CassandraInput() {
                                                 i18nStrings={fileUploadI18nStrings}
                                                 constraintText="Upload a .txt, .cql, or .sql file"
                                             />
+                                            {schemaValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={schemaValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={schemaValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {schemaValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
                                         </FormField>
 
                                         <FormField
@@ -351,6 +527,14 @@ function CassandraInput() {
                                                 i18nStrings={fileUploadI18nStrings}
                                                 constraintText="Upload a .txt file"
                                             />
+                                            {rowSizeValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={rowSizeValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={rowSizeValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {rowSizeValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
                                         </FormField>
 
                                         <Box textAlign="center">

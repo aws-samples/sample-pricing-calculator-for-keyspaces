@@ -278,35 +278,35 @@ export const parseNodetoolInfo = (content) => {
     for (const line of lines) {
         const trimmedLine = line.trim();
         
-        // Look for the line containing "Uptime (seconds)"
-        if (trimmedLine.includes("Uptime (seconds)")) {
-             // Format is something like: "Uptime (seconds): X"
-            const parts = trimmedLine.replace('\n', ' ').replace('\\', '').split(':', 1);
-            if (parts.length === 2) {
-                const uptimeStr = parts[1].trim();
+        // Look for the line containing "Uptime (seconds)" using regex
+        if (/Uptime\s*\(seconds\)/i.test(trimmedLine)) {
+            // Format is something like: "Uptime (seconds): X"
+            const match = trimmedLine.match(/Uptime\s*\(seconds\)\s*:\s*(.+)/i);
+            if (match && match[1]) {
+                const uptimeStr = match[1].trim();
                 try {
                     uptimeSeconds = parseFloat(uptimeStr);
                 } catch (error) {
-                    throw new Error(`Error parsing uptime in seconds: ${parts[1]}`);
+                    throw new Error(`Error parsing uptime in seconds: ${uptimeStr}`);
                 }
             }
         }
         
-        // Look for the line containing "ID"
-        if (trimmedLine.includes("ID")) {
+        // Look for the line containing "ID" using regex
+        if (/^ID\s*:/i.test(trimmedLine)) {
             console.log(trimmedLine);
-            const idParts = trimmedLine.replace('\n', ' ').replace('\\', '').split(':', 1);
-            if (idParts.length === 2) {
-                id = idParts[1].trim();
+            const match = trimmedLine.match(/^ID\s*:\s*(.+)/i);
+            if (match && match[1]) {
+                id = match[1].trim();
             }
         }
 
-        // Look for the line containing "Data Center"
-        if (trimmedLine.includes("Data Center")) {
+        // Look for the line containing "Data Center" using regex
+        if (/Data\s+Center\s*:/i.test(trimmedLine)) {
             console.log(trimmedLine);
-            const dcParts = trimmedLine.replace('\n', ' ').replace('\\', '').split(':', 1);
-            if (dcParts.length === 2) {
-                dc = dcParts[1].trim();
+            const match = trimmedLine.match(/Data\s+Center\s*:\s*(.+)/i);
+            if (match && match[1]) {
+                dc = match[1].trim();
             }
         }
     }
@@ -381,14 +381,22 @@ export const parseRowSizeInfo = (content) => {
 
     for (const line of lines) {
         const trimmedLine = line.trim();
-        // Skip lines that don't contain '=' or look like error lines
-        if (!trimmedLine.includes('=') || trimmedLine.includes('NoHostAvailable')) {
+
+        // Skip lines that don't contain '=' or look like error lines using regex
+        if (!/=/i.test(trimmedLine) || /NoHostAvailable/i.test(trimmedLine)) {
             continue;
         }
 
-        // Split keyspace.table from the rest
-        const [left, right] = trimmedLine.split('=', 1);
-        const keyName = left.trim();
+        // Use regex to split keyspace.table from the rest more reliably
+        const match = trimmedLine.match(/^(.+?)\s*=\s*(.+)$/);
+        if (!match) {
+            console.log("trimmedLine: " + trimmedLine);
+            console.log("No match found");
+            continue; // Skip if we don't have a proper match
+        }
+        
+        const [, keyName, right] = match;
+        const trimmedKeyName = keyName.trim();
 
         // The right side should be something like:
         // { lines: 1986, columns: 12, average: 849 bytes, ... }
@@ -407,18 +415,21 @@ export const parseRowSizeInfo = (content) => {
         const valueDict = {};
         for (const field of fields) {
             const trimmedField = field.trim();
-            if (!trimmedField.includes(': ')) {
+            if (!/:\s*/i.test(trimmedField)) {
                 // Skip malformed fields
                 continue;
             }
             const [k, v] = trimmedField.split(':', 1);
+            if (!k || !v) {
+                continue; // Skip if we don't have both key and value
+            }
             const key = k.trim();
             const val = v.trim();
             // Store as is (string), cast later as needed
             valueDict[key] = val;
         }
 
-        result[keyName] = valueDict;
+        result[trimmedKeyName] = valueDict;
     }
 
     return result;
