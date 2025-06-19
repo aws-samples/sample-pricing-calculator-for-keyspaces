@@ -1,0 +1,378 @@
+import React, { useState } from 'react';
+import {
+    Box,
+    SpaceBetween,
+    FormField,
+    FileUpload,
+    Container,
+    Header,
+    Select,
+    Button
+} from '@cloudscape-design/components';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo } from './ParsingHelpers';
+import { awsRegions } from '../constants/regions';
+
+// Function to get region for a datacenter - can be used throughout the application
+export const getDatacenterRegion = (datacenterName, regionsMap) => {
+    return regionsMap[datacenterName] || null;
+};
+
+// Function to get all datacenter-region mappings
+export const getDatacenterRegionMap = (regionsMap) => {
+    const mapping = {};
+    Object.entries(regionsMap).forEach(([datacenter, region]) => {
+        if (region) {
+            mapping[datacenter] = region;
+        }
+    });
+    return mapping;
+};
+
+function CassandraInput() {
+    const [statusFile, setStatusFile] = useState(null);
+    const [datacenters, setDatacenters] = useState([]);
+    const [regions, setRegions] = useState({});
+    const [datacenterFiles, setDatacenterFiles] = useState({});
+    const [tablestatsData, setTablestatsData] = useState({});
+    const [infoData, setInfoData] = useState({});
+    const [schemaData, setSchemaData] = useState({});
+    const [rowSizeData, setRowSizeData] = useState({});
+
+    const fileUploadI18nStrings = {
+        uploadButtonText: () => "Choose file",
+        dropzoneText: () => "Drop files to upload, or choose file",
+        removeFileAriaLabel: () => "Remove file",
+        limitShowFewer: () => "Show fewer files",
+        limitShowMore: () => "Show more files",
+        errorIconAriaLabel: () => "Error"
+    };
+
+    // Convert awsRegions array to Select options format
+    const regionOptions = awsRegions.map(region => ({
+        label: region,
+        value: region
+    }));
+
+    const handleStatusFileChange = async ({ detail }) => {
+        const file = detail.value[0];
+        if (file) {
+            try {
+                const content = await file.text();
+                const statusData = parseNodetoolStatus(content);
+                
+                if (!statusData || statusData.size === 0) {
+                    console.error('No datacenters found in status file');
+                    return;
+                }
+
+                // Set the file
+                setStatusFile(file);
+                
+                // Extract datacenters and their node counts from the Map
+                const newDatacenters = Array.from(statusData.entries()).map(([dc, nodeCount]) => ({
+                    name: dc,
+                    nodeCount: nodeCount
+                }));
+
+                // Set the datacenters
+                setDatacenters(newDatacenters);
+
+                // Initialize regions state for each datacenter
+                const initialRegions = {};
+                const initialFiles = {};
+                const initialTablestats = {};
+                const initialInfo = {};
+                const initialSchema = {};
+                const initialRowSize = {};
+                newDatacenters.forEach(dc => {
+                    initialRegions[dc.name] = null;
+                    initialFiles[dc.name] = {
+                        tablestats: null,
+                        info: null,
+                        schema: null,
+                        rowSize: null
+                    };
+                    initialTablestats[dc.name] = null;
+                    initialInfo[dc.name] = null;
+                    initialSchema[dc.name] = null;
+                    initialRowSize[dc.name] = null;
+                });
+                setRegions(initialRegions);
+                setDatacenterFiles(initialFiles);
+                setTablestatsData(initialTablestats);
+                setInfoData(initialInfo);
+                setSchemaData(initialSchema);
+                setRowSizeData(initialRowSize);
+
+                console.log('Parsed status data:', statusData);
+                console.log('New datacenters:', newDatacenters);
+            } catch (error) {
+                console.error('Error parsing status file:', error);
+            }
+        }
+    };
+
+    const handleRegionChange = (datacenter, { detail }) => {
+        setRegions(prev => ({
+            ...prev,
+            [datacenter]: detail.selectedOption.value
+        }));
+    };
+
+    const handleDatacenterFileChange = async (datacenter, fileType, { detail }) => {
+        const file = detail.value[0];
+        
+        // Update the file state
+        setDatacenterFiles(prev => ({
+            ...prev,
+            [datacenter]: {
+                ...prev[datacenter],
+                [fileType]: file
+            }
+        }));
+
+        // Validate tablestats file specifically
+        if (fileType === 'tablestats' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parse_nodetool_tablestats(content);
+                console.log('Parsed tablestats data:', parsedData);
+                if (!parsedData || Object.keys(parsedData).length === 0) {
+                    console.error('No valid tablestats data found in file for datacenter:', datacenter);
+                    // You could add error state handling here if needed
+                } else {
+                    console.log(`Successfully parsed tablestats for ${datacenter}:`, parsedData);
+                    
+                    // Store the parsed data
+                    setTablestatsData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                }
+            } catch (error) {
+                console.error(`Error parsing tablestats file for ${datacenter}:`, error);
+                // You could add error state handling here if needed
+            }
+        }
+
+        // Validate info file specifically
+        if (fileType === 'info' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parseNodetoolInfo(content);
+                console.log('Parsed info data:', parsedData);
+                
+                if (!parsedData || !parsedData.uptime_seconds) {
+                    console.error('No valid info data found in file for datacenter:', datacenter);
+                    // You could add error state handling here if needed
+                } else {
+                    console.log(`Successfully parsed info for ${datacenter}:`, parsedData);
+                    
+                    // Store the parsed data
+                    setInfoData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                }
+            } catch (error) {
+                console.error(`Error parsing info file for ${datacenter}:`, error);
+                // You could add error state handling here if needed
+            }
+        }
+
+        // Validate schema file specifically
+        if (fileType === 'schema' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parse_cassandra_schema(content);
+                console.log('Parsed schema data:', parsedData);
+                
+                if (!parsedData || Object.keys(parsedData).length === 0) {
+                    console.error('No valid schema data found in file for datacenter:', datacenter);
+                    // You could add error state handling here if needed
+                } else {
+                    console.log(`Successfully parsed schema for ${datacenter}:`, parsedData);
+                    
+                    // Store the parsed data
+                    setSchemaData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                }
+            } catch (error) {
+                console.error(`Error parsing schema file for ${datacenter}:`, error);
+                // You could add error state handling here if needed
+            }
+        }
+
+        // Validate row size sampler file specifically
+        if (fileType === 'rowSize' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parseRowSizeInfo(content);
+                console.log('Parsed row size data:', parsedData);
+                
+                if (!parsedData || Object.keys(parsedData).length === 0) {
+                    console.error('No valid row size data found in file for datacenter:', datacenter);
+                    // You could add error state handling here if needed
+                } else {
+                    console.log(`Successfully parsed row size data for ${datacenter}:`, parsedData);
+                    
+                    // Store the parsed data
+                    setRowSizeData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                }
+            } catch (error) {
+                console.error(`Error parsing row size file for ${datacenter}:`, error);
+                // You could add error state handling here if needed
+            }
+        }
+    };
+
+    const isDatacenterReady = (datacenterName) => {
+        const region = regions[datacenterName];
+        const files = datacenterFiles[datacenterName];
+        
+        if (!region || !files) {
+            return false;
+        }
+
+        // Check if all required files are uploaded
+        return files.tablestats && files.info && files.schema && files.rowSize;
+    };
+
+    const handleEstimate = (datacenterName) => {
+        console.log(`Estimating for datacenter: ${datacenterName}`);
+        console.log('Region:', regions[datacenterName]);
+        console.log('Files:', datacenterFiles[datacenterName]);
+        console.log('Parsed tablestats data:', tablestatsData[datacenterName]);
+        console.log('Parsed info data:', infoData[datacenterName]);
+        console.log('Parsed schema data:', schemaData[datacenterName]);
+        console.log('Parsed row size data:', rowSizeData[datacenterName]);
+        // TODO: Implement estimation logic here
+    };
+
+    // Example usage of the mapping functions
+    const getCurrentDatacenterRegion = (datacenterName) => {
+        return getDatacenterRegion(datacenterName, regions);
+    };
+
+    const getCurrentDatacenterRegionMap = () => {
+        return getDatacenterRegionMap(regions);
+    };
+
+    return (
+        <Container>
+            <SpaceBetween size="l">
+                <FormField
+                    label="Nodetool Status File"
+                    description="Upload the output from `nodetool status` command. This file contains information about datacenters and nodes in your Cassandra cluster."
+                >
+                    <FileUpload
+                        onChange={handleStatusFileChange}
+                        value={statusFile ? [statusFile] : []}
+                        accept=".txt"
+                        i18nStrings={fileUploadI18nStrings}
+                        constraintText="Upload a .txt file"
+                    />
+                </FormField>
+
+                {datacenters.length > 0 && (
+                    <SpaceBetween size="l">
+                        {datacenters.map((datacenter) => (
+                            <Container key={datacenter.name}>
+                                <SpaceBetween size="l">
+                                    <Header variant="h2">
+                                        {datacenter.name}: {datacenter.nodeCount} nodes
+                                    </Header>
+                                    
+                                    <FormField
+                                        label="AWS Region"
+                                        description="Select the AWS region that corresponds to this datacenter"
+                                    >
+                                        <Select
+                                            selectedOption={regions[datacenter.name] ? { label: regions[datacenter.name], value: regions[datacenter.name] } : null}
+                                            onChange={(detail) => handleRegionChange(datacenter.name, detail)}
+                                            options={regionOptions}
+                                            placeholder="Choose a region"
+                                        />
+                                    </FormField>
+
+                                    <SpaceBetween size="m">
+                                        <FormField
+                                            label="Nodetool Tablestats File"
+                                            description="Upload the output from `nodetool tablestats` command for this datacenter"
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'tablestats', detail)}
+                                                value={datacenterFiles[datacenter.name]?.tablestats ? [datacenterFiles[datacenter.name].tablestats] : []}
+                                                accept=".txt"
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Upload a .txt file"
+                                            />
+                                        </FormField>
+
+                                        <FormField
+                                            label="Nodetool Info File"
+                                            description="Upload the output from `nodetool info` command for this datacenter"
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'info', detail)}
+                                                value={datacenterFiles[datacenter.name]?.info ? [datacenterFiles[datacenter.name].info] : []}
+                                                accept=".txt"
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Upload a .txt file"
+                                            />
+                                        </FormField>
+
+                                        <FormField
+                                            label="Schema File"
+                                            description="Upload the Cassandra schema file (output from `cqlsh -e 'DESCRIBE SCHEMA'`) for this datacenter"
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'schema', detail)}
+                                                value={datacenterFiles[datacenter.name]?.schema ? [datacenterFiles[datacenter.name].schema] : []}
+                                                accept=".txt,.cql,.sql"
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Upload a .txt, .cql, or .sql file"
+                                            />
+                                        </FormField>
+
+                                        <FormField
+                                            label="Row Size Sampler File"
+                                            description="Upload the row size sampler output file for this datacenter"
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'rowSize', detail)}
+                                                value={datacenterFiles[datacenter.name]?.rowSize ? [datacenterFiles[datacenter.name].rowSize] : []}
+                                                accept=".txt"
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Upload a .txt file"
+                                            />
+                                        </FormField>
+
+                                        <Box textAlign="center">
+                                            <Button
+                                                variant="primary"
+                                                onClick={() => handleEstimate(datacenter.name)}
+                                                disabled={!isDatacenterReady(datacenter.name)}
+                                            >
+                                                Estimate for {datacenter.name}
+                                            </Button>
+                                        </Box>
+                                    </SpaceBetween>
+                                </SpaceBetween>
+                            </Container>
+                        ))}
+                    </SpaceBetween>
+                )}
+            </SpaceBetween>
+        </Container>
+    );
+}
+
+export default CassandraInput;
+
+

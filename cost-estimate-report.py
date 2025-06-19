@@ -763,7 +763,7 @@ def print_keyspaces_sizes(keyspaces_set):
         }
     }
     """
-    headers = ["Keyspace", "Table", "Region", "Storage Bytes", "Write Units p/s", "Read Units p/s", "TTL Units p/s", "Backup-PITR"]
+    headers = ["Keyspace", "Table", "Region", "Storage Bytes", "Write Units p/s", "Read Units p/s", "TTL Units Monthly", "Backup-PITR"]
     
     # Initialize totals
     cluster_total = {

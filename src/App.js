@@ -3,12 +3,16 @@ import PricingTable from './components/PricingTable';
 import Navigation from './components/Navigation';
 import MultiRegionForm from './components/MultiRegionForm';
 import KeyspacesHelpPanel from './components/KeyspacesHelpPanel';
+import CassandraInput from './components/CassandraInput';
 import pricingDataJson from './data/mcs.json';  // Import the JSON directly
 import './App.css';
 
 import {
     AppLayout,
-    Container
+    Container,
+    Tabs,
+    Box,
+    SpaceBetween
 } from '@cloudscape-design/components';
 import '@cloudscape-design/global-styles/index.css';
 
@@ -19,6 +23,8 @@ function App() {
     const [selectedRegion, setSelectedRegion] = useState('US East (N. Virginia)');
     const [multiSelectedRegions, setMultiSelectedRegions] = useState([]);
     const [expandedRegions, setExpandedRegions] = useState({});
+    const [activeTab, setActiveTab] = useState('calculator');
+    const [activeInputMethod, setActiveInputMethod] = useState('standard');
     const [formData, setFormData] = useState({
         [selectedRegion]: {
             averageRowSizeInBytes: 1024,
@@ -225,29 +231,78 @@ function App() {
             tools={<KeyspacesHelpPanel />}
             content={
                 <Container>
-                    <MultiRegionForm
-                        selectedRegion={selectedRegion}
-                        setSelectedRegion={setSelectedRegion}
-                        multiSelectedRegions={multiSelectedRegions}
-                        setMultiSelectedRegions={setMultiSelectedRegions}
-                        formData={formData}
-                        setFormData={setFormData}
-                        onSubmit={handleSubmit}
-                        onKeyUp={handleKeyUp}
-                        expandedRegions={expandedRegions}
-                        setExpandedRegions={setExpandedRegions}
-                    />
+                    <SpaceBetween size="l">
+                        <Tabs
+                            activeTabId={activeInputMethod}
+                            onChange={({ detail }) => setActiveInputMethod(detail.activeTabId)}
+                            tabs={[
+                                {
+                                    label: "Keyspaces Input",
+                                    id: "standard",
+                                    content: (
+                                        <Box padding={{ top: "l" }}>
+                                            <SpaceBetween size="l">
+                                                <MultiRegionForm
+                                                    selectedRegion={selectedRegion}
+                                                    setSelectedRegion={setSelectedRegion}
+                                                    multiSelectedRegions={multiSelectedRegions}
+                                                    setMultiSelectedRegions={setMultiSelectedRegions}
+                                                    formData={formData}
+                                                    setFormData={setFormData}
+                                                    onSubmit={handleSubmit}
+                                                    onKeyUp={handleKeyUp}
+                                                    expandedRegions={expandedRegions}
+                                                    setExpandedRegions={setExpandedRegions}
+                                                />
 
-                    {provisionedPricing && Object.keys(provisionedPricing).length > 0 && (
-                        <PricingTable 
-                            provisionedPricing={provisionedPricing}
-                            onDemandPricing={onDemandPricing}
-                            formData={formData}
-                            selectedRegion={selectedRegion}
-                            multiSelectedRegions={multiSelectedRegions}
+                                                <Tabs
+                                                    activeTabId={activeTab}
+                                                    onChange={({ detail }) => setActiveTab(detail.activeTabId)}
+                                                    tabs={[
+                                                        {
+                                                            label: "Calculator",
+                                                            id: "calculator",
+                                                            content: (
+                                                                <Box padding={{ top: "l" }}>
+                                                                    {provisionedPricing && Object.keys(provisionedPricing).length > 0 && (
+                                                                        <PricingTable 
+                                                                            provisionedPricing={provisionedPricing}
+                                                                            onDemandPricing={onDemandPricing}
+                                                                            formData={formData}
+                                                                            selectedRegion={selectedRegion}
+                                                                            multiSelectedRegions={multiSelectedRegions}
+                                                                        />
+                                                                    )}
+                                                                </Box>
+                                                            )
+                                                        },
+                                                        {
+                                                            label: "TCO",
+                                                            id: "tco",
+                                                            content: (
+                                                                <Box padding={{ top: "l" }}>
+                                                                    {/* TCO content will be added here later */}
+                                                                </Box>
+                                                            )
+                                                        }
+                                                    ]}
+                                                />
+                                            </SpaceBetween>
+                                        </Box>
+                                    )
+                                },
+                                {
+                                    label: "Cassandra Input",
+                                    id: "advanced",
+                                    content: (
+                                        <Box padding={{ top: "l" }}>
+                                            <CassandraInput />
+                                        </Box>
+                                    )
+                                }
+                            ]}
                         />
-                    )}
-                   
+                    </SpaceBetween>
                 </Container>
             }
         />
