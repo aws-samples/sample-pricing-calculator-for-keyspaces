@@ -8,9 +8,10 @@ import {
     Header,
     Select,
     Button,
-    Alert
+    Alert,
+    Table
 } from '@cloudscape-design/components';
-import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo } from './ParsingHelpers';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, buildCassandraLocalSet, getKeyspaceCassandraAggregate } from './ParsingHelpers';
 import { awsRegions } from '../constants/regions';
 
 // Function to get region for a datacenter - can be used throughout the application
@@ -29,6 +30,84 @@ export const getDatacenterRegionMap = (regionsMap) => {
     return mapping;
 };
 
+
+// Results Table Component
+const ResultsTable = ({ results }) => {
+    if (!results) return null;
+    
+    const tableItems = Object.entries(results).map(([keyspace, data]) => ({
+        /***type: keyspaceData.type,
+                    total_live_space_gb: 0,
+                    uncompressed_single_replica_gb: 0,
+                    avg_row_size_bytes: 0,
+                    writes_monthly: 0,
+                    ttls_monthly: 0,
+                    reads_monthly: 0,
+                    sample_count: 0 */
+        keyspace,
+        keyspace_type: data.type,
+        writes_per_second: Math.round(data.writes_per_second),
+        reads_per_second: Math.round(data.reads_per_second),
+        ttl_deletes_per_second: Math.round(data.ttl_deletes_per_second),
+        avg_row_size_bytes: Math.round(data.avg_row_size_bytes),
+        total_live_space_gb: Math.round(data.total_live_space_gb),
+        ttls_per_second: Math.round(data.ttls_per_second),
+        uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb)
+    }));
+
+    return (
+        <Table 
+            items={tableItems}
+            columnDefinitions={[
+                {
+                    id: 'keyspace',
+                    header: 'Keyspace',
+                    cell: item => item.keyspace,
+                    align: 'left'
+                },
+                {
+                    id: 'writes_per_second',
+                    header: 'Writes per second',
+                    cell: item => item.writes_per_second,
+                    align: 'right'
+                },
+                {
+                    id: 'reads_per_second',
+                    header: 'Reads per second',
+                    cell: item => item.reads_per_second,
+                    align: 'right'
+                },
+                {
+                    id: 'avg_row_size_bytes',
+                    header: 'Avg row size',
+                    cell: item => item.avg_row_size_bytes,
+                    align: 'right'
+                },
+                {
+                    id: 'total_live_space_gb',
+                    header: 'total live space',
+                    cell: item => item.total_live_space_gb,
+                    align: 'right'
+                },
+                {
+                    id: 'Single uncompressed_single_replica_gb of data',
+                    header: 'Single uncompressed replica',
+                    cell: item => item.uncompressed_single_replica_gb,
+                    align: 'right'
+                },
+                {
+                    id: 'ttl_deletes_per_second',
+                    header: 'ttl deletes per second',
+                    cell: item => item.ttls_per_second,
+                    align: 'right'
+                }
+            ]}
+            sortingDisabled
+            variant="bordered"
+        />
+    );
+};
+
 function CassandraInput() {
     const [statusFile, setStatusFile] = useState(null);
     const [datacenters, setDatacenters] = useState([]);
@@ -42,6 +121,8 @@ function CassandraInput() {
     const [infoValidation, setInfoValidation] = useState({});
     const [schemaValidation, setSchemaValidation] = useState({});
     const [rowSizeValidation, setRowSizeValidation] = useState({});
+    const [estimateValidation, setEstimateValidation] = useState({});
+    const [estimateResults, setEstimateResults] = useState({});
 
     const fileUploadI18nStrings = {
         uploadButtonText: () => "Choose file",
@@ -93,6 +174,8 @@ function CassandraInput() {
                 const initialInfoValidation = {};
                 const initialSchemaValidation = {};
                 const initialRowSizeValidation = {};
+                const initialEstimateValidation = {};
+                const initialEstimateResults = {};
                 newDatacenters.forEach(dc => {
                     initialRegions[dc.name] = null;
                     initialFiles[dc.name] = {
@@ -109,6 +192,8 @@ function CassandraInput() {
                     initialInfoValidation[dc.name] = null;
                     initialSchemaValidation[dc.name] = null;
                     initialRowSizeValidation[dc.name] = null;
+                    initialEstimateValidation[dc.name] = null;
+                    initialEstimateResults[dc.name] = null;
                 });
                 setRegions(initialRegions);
                 setDatacenterFiles(initialFiles);
@@ -120,6 +205,8 @@ function CassandraInput() {
                 setInfoValidation(initialInfoValidation);
                 setSchemaValidation(initialSchemaValidation);
                 setRowSizeValidation(initialRowSizeValidation);
+                setEstimateValidation(initialEstimateValidation);
+                setEstimateResults(initialEstimateResults);
 
                 console.log('Parsed status data:', statusData);
                 console.log('New datacenters:', newDatacenters);
@@ -403,7 +490,48 @@ function CassandraInput() {
         console.log('Parsed info data:', infoData[datacenterName]);
         console.log('Parsed schema data:', schemaData[datacenterName]);
         console.log('Parsed row size data:', rowSizeData[datacenterName]);
-        // TODO: Implement estimation logic here
+
+        try {
+            const nodeid = infoData[datacenterName].id 
+
+            const samples = { [datacenterName]:  {[nodeid]:{
+                tablestats_data: tablestatsData[datacenterName],
+                     schema: schemaData[datacenterName],
+                      info_data: infoData[datacenterName],
+                       row_size_data: rowSizeData[datacenterName]}}}
+
+            //create a map of datacenters
+           const statusData = new Map(datacenters.map(dc => [dc.name, dc.nodeCount]));
+            console.log(samples);
+            const result = getKeyspaceCassandraAggregate(buildCassandraLocalSet(samples, statusData), datacenterName);
+            console.log('Estimation result:', result);
+            
+            // Set success message
+            setEstimateValidation(prev => ({
+                ...prev,
+                [datacenterName]: {
+                    success: true,
+                    message: `Estimate for this region ${regions[datacenterName]} provided below`
+                }
+            }));
+
+            // Store the estimation result
+            setEstimateResults(prev => ({
+                ...prev,
+                [datacenterName]: result
+            }));
+        } catch (error) {
+            console.error(`Error during estimation for this datacenter: ${datacenterName}:`, error);
+            
+            // Set failure message
+            setEstimateValidation(prev => ({
+                ...prev,
+                [datacenterName]: {
+                    success: false,
+                    message: `Estimation failed: ${error.message}`
+                }
+            }));
+        }
     };
 
     // Example usage of the mapping functions
@@ -546,6 +674,24 @@ function CassandraInput() {
                                                 Estimate for {datacenter.name}
                                             </Button>
                                         </Box>
+                                        
+                                        {estimateValidation[datacenter.name] && (
+                                            <Alert
+                                                type={estimateValidation[datacenter.name].success ? "success" : "error"}
+                                                header={estimateValidation[datacenter.name].success ? "Estimation Complete" : "Estimation Failed"}
+                                            >
+                                                {estimateValidation[datacenter.name].message}
+                                            </Alert>
+                                        )}
+                                        
+                                        {estimateResults[datacenter.name] && estimateValidation[datacenter.name]?.success && (
+                                            <FormField
+                                                label="Estimation Results"
+                                                description="Aggregated numbers used for pricing estimates below"
+                                            >
+                                                <ResultsTable results={estimateResults[datacenter.name]} />
+                                            </FormField>
+                                        )}
                                     </SpaceBetween>
                                 </SpaceBetween>
                             </Container>
