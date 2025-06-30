@@ -449,25 +449,22 @@ function App() {
                                                 />
 
                                                 <Box padding={{ top: "l" }}>
-                                                    {provisionedPricing && Object.keys(provisionedPricing).length > 0 && (
-                                                        <SpaceBetween size="l">
-                                                            <Header variant="h2">Pricing Estimate</Header>
-                                                            
-                                                            <PricingTable 
-                                                                provisionedPricing={provisionedPricing}
-                                                                onDemandPricing={onDemandPricing}
-                                                                formData={formData}
-                                                                selectedRegion={selectedRegion}
-                                                                multiSelectedRegions={multiSelectedRegions}
-                                                            />
-                                                            <Box>
-                                                                <strong>Assumptions:</strong>
-                                                                <ul style={{ marginTop: '8px', marginBottom: '16px' }}>
-                                                                    <li>Provisioned estimate includes 70% target utilization for the Application Auto Scaling policy</li>
-                                                                </ul>
-                                                            </Box>
-                                                        </SpaceBetween>
-                                                    )}
+                                                    <SpaceBetween size="l">
+                                                        <Header variant="h2">Pricing Estimate</Header>
+                                                        <PricingTable 
+                                                            provisionedPricing={provisionedPricing}
+                                                            onDemandPricing={onDemandPricing}
+                                                            formData={formData}
+                                                            selectedRegion={selectedRegion}
+                                                            multiSelectedRegions={multiSelectedRegions}
+                                                        />
+                                                        <Box>
+                                                            <strong>Assumptions:</strong>
+                                                            <ul style={{ marginTop: '8px', marginBottom: '16px' }}>
+                                                                <li>Provisioned estimate includes 70% target utilization for the Application Auto Scaling policy</li>
+                                                            </ul>
+                                                        </Box>
+                                                    </SpaceBetween>
                                                 </Box>
                                             </SpaceBetween>
                                         </Box>

@@ -8,12 +8,16 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   const calculateTotal = (pricing, consistency) => {
+    if (!pricing || Object.keys(pricing).length === 0) {
+      return 0;
+    }
+    
     const isStrong = consistency === 'strong';
     return (
       (isStrong ? pricing.strongConsistencyReads : pricing.eventualConsistencyReads) +
       (isStrong ? pricing.strongConsistencyWrites : pricing.eventualConsistencyWrites) +
       (isStrong ? pricing.strongConsistencyStorage : pricing.eventualConsistencyStorage) +
-      (formData[selectedRegion].pointInTimeRecoveryForBackups ? 
+      (formData[selectedRegion]?.pointInTimeRecoveryForBackups ? 
         (isStrong ? pricing.strongConsistencyBackup : pricing.eventualConsistencyBackup) : 0) +
       (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
     );
@@ -70,45 +74,45 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
   const tableItems = [
     { 
       metric: "Read Request Price", 
-      provisionedStrong: provisionedPricing.strongConsistencyReads,
-      provisionedEventual: provisionedPricing.eventualConsistencyReads,
-      onDemandStrong: onDemandPricing.strongConsistencyReads,
-      onDemandEventual: onDemandPricing.eventualConsistencyReads
+      provisionedStrong: provisionedPricing?.strongConsistencyReads || 0,
+      provisionedEventual: provisionedPricing?.eventualConsistencyReads || 0,
+      onDemandStrong: onDemandPricing?.strongConsistencyReads || 0,
+      onDemandEventual: onDemandPricing?.eventualConsistencyReads || 0
     },
     { 
       metric: "Write Request Price", 
-      provisionedStrong: provisionedPricing.strongConsistencyWrites,
-      provisionedEventual: provisionedPricing.eventualConsistencyWrites,
-      onDemandStrong: onDemandPricing.strongConsistencyWrites,
-      onDemandEventual: onDemandPricing.eventualConsistencyWrites
+      provisionedStrong: provisionedPricing?.strongConsistencyWrites || 0,
+      provisionedEventual: provisionedPricing?.eventualConsistencyWrites || 0,
+      onDemandStrong: onDemandPricing?.strongConsistencyWrites || 0,
+      onDemandEventual: onDemandPricing?.eventualConsistencyWrites || 0
     },
     { 
       metric: "Storage Price", 
-      provisionedStrong: provisionedPricing.strongConsistencyStorage,
-      provisionedEventual: provisionedPricing.eventualConsistencyStorage,
-      onDemandStrong: onDemandPricing.strongConsistencyStorage,
-      onDemandEventual: onDemandPricing.eventualConsistencyStorage
+      provisionedStrong: provisionedPricing?.strongConsistencyStorage || 0,
+      provisionedEventual: provisionedPricing?.eventualConsistencyStorage || 0,
+      onDemandStrong: onDemandPricing?.strongConsistencyStorage || 0,
+      onDemandEventual: onDemandPricing?.eventualConsistencyStorage || 0
     },
-    formData[selectedRegion].pointInTimeRecoveryForBackups && { 
+    formData[selectedRegion]?.pointInTimeRecoveryForBackups && { 
       metric: "Backup Price", 
-      provisionedStrong: provisionedPricing.strongConsistencyBackup,
-      provisionedEventual: provisionedPricing.eventualConsistencyBackup,
-      onDemandStrong: onDemandPricing.strongConsistencyBackup,
-      onDemandEventual: onDemandPricing.eventualConsistencyBackup
+      provisionedStrong: provisionedPricing?.strongConsistencyBackup || 0,
+      provisionedEventual: provisionedPricing?.eventualConsistencyBackup || 0,
+      onDemandStrong: onDemandPricing?.strongConsistencyBackup || 0,
+      onDemandEventual: onDemandPricing?.eventualConsistencyBackup || 0
     },
     { 
       metric: "TTL Deletes Price", 
-      provisionedStrong: provisionedPricing.strongConsistencyTtlDeletesPrice,
-      provisionedEventual: provisionedPricing.eventualConsistencyTtlDeletesPrice,
-      onDemandStrong: onDemandPricing.strongConsistencyTtlDeletesPrice,
-      onDemandEventual: onDemandPricing.eventualConsistencyTtlDeletesPrice
+      provisionedStrong: provisionedPricing?.strongConsistencyTtlDeletesPrice || 0,
+      provisionedEventual: provisionedPricing?.eventualConsistencyTtlDeletesPrice || 0,
+      onDemandStrong: onDemandPricing?.strongConsistencyTtlDeletesPrice || 0,
+      onDemandEventual: onDemandPricing?.eventualConsistencyTtlDeletesPrice || 0
     },
     { 
       metric: "Monthly total", 
-      provisionedStrong: calculateTotal(provisionedPricing, 'strong'),
-      provisionedEventual: calculateTotal(provisionedPricing, 'eventual'),
-      onDemandStrong: calculateTotal(onDemandPricing, 'strong'),
-      onDemandEventual: calculateTotal(onDemandPricing, 'eventual')
+      provisionedStrong: calculateTotal(provisionedPricing || {}, 'strong'),
+      provisionedEventual: calculateTotal(provisionedPricing || {}, 'eventual'),
+      onDemandStrong: calculateTotal(onDemandPricing || {}, 'strong'),
+      onDemandEventual: calculateTotal(onDemandPricing || {}, 'eventual')
     },
   ].filter(Boolean);
 
@@ -136,52 +140,52 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     const tableData = [
       ['Metric', 'Provisioned (Strong)', 'Provisioned (Eventual)', 'On-Demand (Strong)', 'On-Demand (Eventual)'],
       ['Read Request Units', 
-        formatPrice(provisionedPricing.strongConsistencyReads),
-        formatPrice(provisionedPricing.eventualConsistencyReads),
-        formatPrice(onDemandPricing.strongConsistencyReads),
-        formatPrice(onDemandPricing.eventualConsistencyReads)
+        formatPrice(provisionedPricing?.strongConsistencyReads || 0),
+        formatPrice(provisionedPricing?.eventualConsistencyReads || 0),
+        formatPrice(onDemandPricing?.strongConsistencyReads || 0),
+        formatPrice(onDemandPricing?.eventualConsistencyReads || 0)
       ],
       ['Write Request Units',
-        formatPrice(provisionedPricing.strongConsistencyWrites),
-        formatPrice(provisionedPricing.eventualConsistencyWrites),
-        formatPrice(onDemandPricing.strongConsistencyWrites),
-        formatPrice(onDemandPricing.eventualConsistencyWrites)
+        formatPrice(provisionedPricing?.strongConsistencyWrites || 0),
+        formatPrice(provisionedPricing?.eventualConsistencyWrites || 0),
+        formatPrice(onDemandPricing?.strongConsistencyWrites || 0),
+        formatPrice(onDemandPricing?.eventualConsistencyWrites || 0)
       ],
       ['Storage Price',
-        formatPrice(provisionedPricing.strongConsistencyStorage),
-        formatPrice(provisionedPricing.eventualConsistencyStorage),
-        formatPrice(onDemandPricing.strongConsistencyStorage),
-        formatPrice(onDemandPricing.eventualConsistencyStorage)
+        formatPrice(provisionedPricing?.strongConsistencyStorage || 0),
+        formatPrice(provisionedPricing?.eventualConsistencyStorage || 0),
+        formatPrice(onDemandPricing?.strongConsistencyStorage || 0),
+        formatPrice(onDemandPricing?.eventualConsistencyStorage || 0)
       ]
     ];
 
     // Add backup price row if PITR is enabled
-    if (formData[selectedRegion].pointInTimeRecoveryForBackups) {
+    if (formData[selectedRegion]?.pointInTimeRecoveryForBackups) {
       tableData.push([
         'Point-in-time recovery Price',
-        formatPrice(provisionedPricing.strongConsistencyBackup),
-        formatPrice(provisionedPricing.eventualConsistencyBackup),
-        formatPrice(onDemandPricing.strongConsistencyBackup),
-        formatPrice(onDemandPricing.eventualConsistencyBackup)
+        formatPrice(provisionedPricing?.strongConsistencyBackup || 0),
+        formatPrice(provisionedPricing?.eventualConsistencyBackup || 0),
+        formatPrice(onDemandPricing?.strongConsistencyBackup || 0),
+        formatPrice(onDemandPricing?.eventualConsistencyBackup || 0)
       ]);
     }
 
     // Add TTL Deletes Price row
     tableData.push([
       'TTL Deletes Price',
-      formatPrice(provisionedPricing.strongConsistencyTtlDeletesPrice),
-      formatPrice(provisionedPricing.eventualConsistencyTtlDeletesPrice),
-      formatPrice(onDemandPricing.strongConsistencyTtlDeletesPrice),
-      formatPrice(onDemandPricing.eventualConsistencyTtlDeletesPrice)
+      formatPrice(provisionedPricing?.strongConsistencyTtlDeletesPrice || 0),
+      formatPrice(provisionedPricing?.eventualConsistencyTtlDeletesPrice || 0),
+      formatPrice(onDemandPricing?.strongConsistencyTtlDeletesPrice || 0),
+      formatPrice(onDemandPricing?.eventualConsistencyTtlDeletesPrice || 0)
     ]);
 
     // Add Total row
     tableData.push([
       'Total',
-      formatPrice(calculateTotal(provisionedPricing, 'strong')),
-      formatPrice(calculateTotal(provisionedPricing, 'eventual')),
-      formatPrice(calculateTotal(onDemandPricing, 'strong')),
-      formatPrice(calculateTotal(onDemandPricing, 'eventual'))
+      formatPrice(calculateTotal(provisionedPricing || {}, 'strong')),
+      formatPrice(calculateTotal(provisionedPricing || {}, 'eventual')),
+      formatPrice(calculateTotal(onDemandPricing || {}, 'strong')),
+      formatPrice(calculateTotal(onDemandPricing || {}, 'eventual'))
     ]);
 
     // Calculate starting Y position based on number of regions
@@ -309,20 +313,23 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
         </Link>
       </Box>
       
-      {!isTransitioning && (
-        <Table
-          columnDefinitions={allColumns}
-          items={tableItems}
-          variant="embedded"
-          stickyHeader={false}
-          resizableColumns={false}
-          wrapLines={false}
-          stripedRows={false}
-          contentDensity="compact"
-          enableKeyboardNavigation={false}
-          trackBy="metric"
-        />
-      )}
+      <Table
+        columnDefinitions={allColumns}
+        items={tableItems}
+        variant="embedded"
+        stickyHeader={false}
+        resizableColumns={false}
+        wrapLines={false}
+        stripedRows={false}
+        contentDensity="compact"
+        enableKeyboardNavigation={false}
+        trackBy="metric"
+        empty={
+          <Box textAlign="center" color="text-body-secondary" padding="xl">
+            Enter values above to see pricing estimates
+          </Box>
+        }
+      />
     </SpaceBetween>
   );
 }
