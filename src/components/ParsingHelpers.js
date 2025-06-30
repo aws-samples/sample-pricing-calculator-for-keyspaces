@@ -400,7 +400,6 @@ export const parseNodetoolInfo = (content) => {
         
         // Look for the line containing "ID" using regex
         if (/^ID\s*:/i.test(trimmedLine)) {
-            console.log(trimmedLine);
             const match = trimmedLine.match(/^ID\s*:\s*(.+)/i);
             if (match && match[1]) {
                 id = match[1].trim();
@@ -409,7 +408,6 @@ export const parseNodetoolInfo = (content) => {
 
         // Look for the line containing "Data Center" using regex
         if (/Data\s+Center\s*:/i.test(trimmedLine)) {
-            console.log(trimmedLine);
             const match = trimmedLine.match(/Data\s+Center\s*:\s*(.+)/i);
             if (match && match[1]) {
                 dc = match[1].trim();
@@ -496,8 +494,6 @@ export const parseRowSizeInfo = (content) => {
         // Use regex to split keyspace.table from the rest more reliably
         const match = trimmedLine.match(/^(.+?)\s*=\s*(.+)$/);
         if (!match) {
-            console.log("trimmedLine: " + trimmedLine);
-            console.log("No match found");
             continue; // Skip if we don't have a proper match
         }
         
@@ -617,4 +613,4 @@ export const handleRowSizeFile = async (file) => {
         console.error('Error parsing row size file:', error);
         throw new Error(`Failed to parse row size file: ${error.message}`);
     }
-}; 
+};

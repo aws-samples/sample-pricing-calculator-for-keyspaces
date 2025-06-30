@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
     Box,
     SpaceBetween,
@@ -11,8 +11,9 @@ import {
     Alert,
     Table
 } from '@cloudscape-design/components';
-import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, buildCassandraLocalSet, getKeyspaceCassandraAggregate } from './ParsingHelpers';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, buildCassandraLocalSet, getKeyspaceCassandraAggregate, SECONDS_PER_MONTH, HOURS_PER_MONTH } from './ParsingHelpers';
 import { awsRegions } from '../constants/regions';
+import pricingDataJson from '../data/mcs.json';
 
 // Function to get region for a datacenter - can be used throughout the application
 export const getDatacenterRegion = (datacenterName, regionsMap) => {
@@ -30,100 +31,144 @@ export const getDatacenterRegionMap = (regionsMap) => {
     return mapping;
 };
 
-
-// Results Table Component
-const ResultsTable = ({ results }) => {
-    if (!results) return null;
+// Function to format currency with commas and proper rounding
+const formatCurrency = (amount) => {
     
-    const tableItems = Object.entries(results).map(([keyspace, data]) => ({
-        /***type: keyspaceData.type,
-                    total_live_space_gb: 0,
-                    uncompressed_single_replica_gb: 0,
-                    avg_row_size_bytes: 0,
-                    writes_monthly: 0,
-                    ttls_monthly: 0,
-                    reads_monthly: 0,
-                    sample_count: 0 */
-        keyspace,
-        keyspace_type: data.type,
-        writes_per_second: Math.round(data.writes_per_second),
-        reads_per_second: Math.round(data.reads_per_second),
-        ttl_deletes_per_second: Math.round(data.ttl_deletes_per_second),
-        avg_row_size_bytes: Math.round(data.avg_row_size_bytes),
-        total_live_space_gb: Math.round(data.total_live_space_gb),
-        ttls_per_second: Math.round(data.ttls_per_second),
-        uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb)
-    }));
-
-    return (
-        <Table 
-            items={tableItems}
-            columnDefinitions={[
-                {
-                    id: 'keyspace',
-                    header: 'Keyspace',
-                    cell: item => item.keyspace,
-                    align: 'left'
-                },
-                {
-                    id: 'writes_per_second',
-                    header: 'Writes per second',
-                    cell: item => item.writes_per_second,
-                    align: 'right'
-                },
-                {
-                    id: 'reads_per_second',
-                    header: 'Reads per second',
-                    cell: item => item.reads_per_second,
-                    align: 'right'
-                },
-                {
-                    id: 'avg_row_size_bytes',
-                    header: 'Avg row size',
-                    cell: item => item.avg_row_size_bytes,
-                    align: 'right'
-                },
-                {
-                    id: 'total_live_space_gb',
-                    header: 'total live space',
-                    cell: item => item.total_live_space_gb,
-                    align: 'right'
-                },
-                {
-                    id: 'Single uncompressed_single_replica_gb of data',
-                    header: 'Single uncompressed replica',
-                    cell: item => item.uncompressed_single_replica_gb,
-                    align: 'right'
-                },
-                {
-                    id: 'ttl_deletes_per_second',
-                    header: 'ttl deletes per second',
-                    cell: item => item.ttls_per_second,
-                    align: 'right'
-                }
-            ]}
-            sortingDisabled
-            variant="bordered"
-        />
-    );
+    if (amount < 0.01) {
+        return `$${Math.ceil(amount * 100) / 100}`;
+    }
+    if (amount < 1) {
+        return `$${amount.toFixed(2)}`;
+    }
+    return `$${Math.ceil(amount).toLocaleString()}`;
 };
 
-function CassandraInput() {
-    const [statusFile, setStatusFile] = useState(null);
-    const [datacenters, setDatacenters] = useState([]);
-    const [regions, setRegions] = useState({});
-    const [datacenterFiles, setDatacenterFiles] = useState({});
-    const [tablestatsData, setTablestatsData] = useState({});
-    const [infoData, setInfoData] = useState({});
-    const [schemaData, setSchemaData] = useState({});
-    const [rowSizeData, setRowSizeData] = useState({});
-    const [tablestatsValidation, setTablestatsValidation] = useState({});
-    const [infoValidation, setInfoValidation] = useState({});
-    const [schemaValidation, setSchemaValidation] = useState({});
-    const [rowSizeValidation, setRowSizeValidation] = useState({});
-    const [estimateValidation, setEstimateValidation] = useState({});
-    const [estimateResults, setEstimateResults] = useState({});
+// Function to get region pricing data
+const getRegionPricing = (regionName) => {
+    if (!pricingDataJson || !pricingDataJson.regions || !pricingDataJson.regions[regionName]) {
+        console.log('No pricing data available for region:', regionName);
+        return null;
+    }
 
+    const regionPricing = pricingDataJson.regions[regionName];
+    
+    return {
+        readRequestPrice: regionPricing['MCS-ReadUnits'].price,
+        writeRequestPrice: regionPricing['MCS-WriteUnits'].price,
+        writeRequestPricePerHour: regionPricing['Provisioned Write Units'].price,
+        readRequestPricePerHour: regionPricing['Provisioned Read Units'].price,
+        storagePricePerGB: regionPricing['AmazonMCS - Indexed DataStore per GB-Mo'].price,
+        pitrPricePerGB: regionPricing['Point-In-Time-Restore PITR Backup Storage per GB-Mo'].price,
+        ttlDeletesPrice: regionPricing['Time to Live'].price
+    };
+};
+
+
+
+function CassandraInput({
+    statusFile,
+    datacenters,
+    regions,
+    datacenterFiles,
+    tablestatsData,
+    infoData,
+    schemaData,
+    rowSizeData,
+    tablestatsValidation,
+    infoValidation,
+    schemaValidation,
+    rowSizeValidation,
+    estimateValidation,
+    estimateResults,
+    onStatusFileChange,
+    onRegionChange,
+    onFileChange,
+    onEstimate,
+    getDatacenterRegionMap,
+    getDatacenterRegionMapFromDOM
+}) {
+    // Results Table Component
+const ResultsTable = ({ results }) => {
+    // Memoize the table items to prevent unnecessary re-renders
+    const tableItems = useMemo(() => {
+        if (!results) return [];
+        return Object.entries(results).map(([keyspace, data]) => ({
+            keyspace,
+            keyspace_type: data.type,
+            writes_per_second: Math.round(data.writes_per_second),
+            reads_per_second: Math.round(data.reads_per_second),
+            ttl_deletes_per_second: Math.round(data.ttl_deletes_per_second),
+            avg_row_size_bytes: Math.round(data.avg_row_size_bytes),
+            total_live_space_gb: Math.round(data.total_live_space_gb),
+            ttls_per_second: Math.round(data.ttls_per_second),
+            uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb)
+        }));
+    }, [results]);
+
+    return (
+        <div style={{ 
+            height: '400px', 
+            width: '100%', 
+            position: 'relative',
+            overflow: 'hidden'
+        }}>
+            <Table 
+                items={tableItems}
+                columnDefinitions={[
+                    {
+                        id: 'keyspace',
+                        header: 'Keyspace',
+                        cell: item => item.keyspace,
+                        align: 'left'
+                    },
+                    {
+                        id: 'writes_per_second',
+                        header: 'Writes per second',
+                        cell: item => item.writes_per_second,
+                        align: 'right'
+                    },
+                    {
+                        id: 'reads_per_second',
+                        header: 'Reads per second',
+                        cell: item => item.reads_per_second,
+                        align: 'right'
+                    },
+                    {
+                        id: 'avg_row_size_bytes',
+                        header: 'Avg row size',
+                        cell: item => item.avg_row_size_bytes,
+                        align: 'right'
+                    },
+                    {
+                        id: 'total_live_space_gb',
+                        header: 'total live space',
+                        cell: item => item.total_live_space_gb,
+                        align: 'right'
+                    },
+                    {
+                        id: 'Single uncompressed_single_replica_gb of data',
+                        header: 'Single uncompressed replica',
+                        cell: item => item.uncompressed_single_replica_gb,
+                        align: 'right'
+                    },
+                    {
+                        id: 'ttl_deletes_per_second',
+                        header: 'ttl deletes per second',
+                        cell: item => item.ttls_per_second,
+                        align: 'right'
+                    }
+                ]}
+                sortingDisabled
+                variant="bordered"
+                empty={
+                    <Box textAlign="center" color="text-body-secondary" padding="xl">
+                        Click "Estimate" to see sizing details
+                    </Box>
+                }
+            />
+        </div>
+    );
+};
     const fileUploadI18nStrings = {
         uploadButtonText: () => "Choose file",
         dropzoneText: () => "Drop files to upload, or choose file",
@@ -151,62 +196,14 @@ function CassandraInput() {
                     return;
                 }
 
-                // Set the file
-                setStatusFile(file);
-                
                 // Extract datacenters and their node counts from the Map
                 const newDatacenters = Array.from(statusData.entries()).map(([dc, nodeCount]) => ({
                     name: dc,
                     nodeCount: nodeCount
                 }));
 
-                // Set the datacenters
-                setDatacenters(newDatacenters);
-
-                // Initialize regions state for each datacenter
-                const initialRegions = {};
-                const initialFiles = {};
-                const initialTablestats = {};
-                const initialInfo = {};
-                const initialSchema = {};
-                const initialRowSize = {};
-                const initialTablestatsValidation = {};
-                const initialInfoValidation = {};
-                const initialSchemaValidation = {};
-                const initialRowSizeValidation = {};
-                const initialEstimateValidation = {};
-                const initialEstimateResults = {};
-                newDatacenters.forEach(dc => {
-                    initialRegions[dc.name] = null;
-                    initialFiles[dc.name] = {
-                        tablestats: null,
-                        info: null,
-                        schema: null,
-                        rowSize: null
-                    };
-                    initialTablestats[dc.name] = null;
-                    initialInfo[dc.name] = null;
-                    initialSchema[dc.name] = null;
-                    initialRowSize[dc.name] = null;
-                    initialTablestatsValidation[dc.name] = null;
-                    initialInfoValidation[dc.name] = null;
-                    initialSchemaValidation[dc.name] = null;
-                    initialRowSizeValidation[dc.name] = null;
-                    initialEstimateValidation[dc.name] = null;
-                    initialEstimateResults[dc.name] = null;
-                });
-                setRegions(initialRegions);
-                setDatacenterFiles(initialFiles);
-                setTablestatsData(initialTablestats);
-                setInfoData(initialInfo);
-                setSchemaData(initialSchema);
-                setRowSizeData(initialRowSize);
-                setTablestatsValidation(initialTablestatsValidation);
-                setInfoValidation(initialInfoValidation);
-                setSchemaValidation(initialSchemaValidation);
-                setRowSizeValidation(initialRowSizeValidation);
-                setEstimateValidation(initialEstimateValidation);
-                setEstimateResults(initialEstimateResults);
+                // Call the parent handler
+                onStatusFileChange(file, newDatacenters);
 
                 console.log('Parsed status data:', statusData);
                 console.log('New datacenters:', newDatacenters);
@@ -217,24 +214,12 @@ function CassandraInput() {
     };
 
     const handleRegionChange = (datacenter, { detail }) => {
-        setRegions(prev => ({
-            ...prev,
-            [datacenter]: detail.selectedOption.value
-        }));
+        onRegionChange(datacenter, detail.selectedOption.value);
     };
 
     const handleDatacenterFileChange = async (datacenter, fileType, { detail }) => {
         const file = detail.value[0];
         
-        // Update the file state
-        setDatacenterFiles(prev => ({
-            ...prev,
-            [datacenter]: {
-                ...prev[datacenter],
-                [fileType]: file
-            }
-        }));
-
         // Validate tablestats file specifically
         if (fileType === 'tablestats' && file) {
             try {
@@ -246,13 +231,11 @@ function CassandraInput() {
                     console.error('No valid tablestats data found in file for datacenter:', datacenter);
                     
                     // Set validation error
-                    setTablestatsValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: false,
-                            message: 'No valid tablestats data found in file'
-                        }
-                    }));
+                    const validation = {
+                        success: false,
+                        message: 'No valid tablestats data found in file'
+                    };
+                    onFileChange(datacenter, fileType, file, null, validation);
                 } else {
                     // Count total tables across all keyspaces
                     let totalTables = 0;
@@ -264,32 +247,22 @@ function CassandraInput() {
                     console.log(`Successfully parsed tablestats for ${datacenter}:`, parsedData);
                     console.log(`Total system and user tables ${totalTables} and keyspaces ${totalKeysapces}` );
                     
-                    // Store the parsed data
-                    setTablestatsData(prev => ({
-                        ...prev,
-                        [datacenter]: parsedData
-                    }));
-                    
                     // Set validation success
-                    setTablestatsValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: true,
-                            message: `Successfully parsed ${totalTables} user definedtables from ${Object.keys(parsedData).length} keyspaces`
-                        }
-                    }));
+                    const validation = {
+                        success: true,
+                        message: `Successfully parsed ${totalTables} user definedtables from ${Object.keys(parsedData).length} keyspaces`
+                    };
+                    onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
             } catch (error) {
                 console.error(`Error parsing tablestats file for ${datacenter}:`, error);
                 
                 // Set validation error
-                setTablestatsValidation(prev => ({
-                    ...prev,
-                    [datacenter]: {
-                        success: false,
-                        message: `Error parsing file: ${error.message}`
-                    }
-                }));
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
             }
         }
 
@@ -304,13 +277,11 @@ function CassandraInput() {
                     console.error('No valid info data found in file for datacenter:', datacenter);
                     
                     // Set validation error
-                    setInfoValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: false,
-                            message: 'No valid info data found in file'
-                        }
-                    }));
+                    const validation = {
+                        success: false,
+                        message: 'No valid info data found in file'
+                    };
+                    onFileChange(datacenter, fileType, file, null, validation);
                 } else {
                     // Check if datacenter matches
                     const fileDatacenter = parsedData.dc;
@@ -319,42 +290,30 @@ function CassandraInput() {
                     console.log(`Successfully parsed info for ${datacenter}:`, parsedData);
                     console.log(`File datacenter: ${fileDatacenter}, Expected: ${datacenter}, Match: ${datacenterMatch}`);
                     
-                    // Store the parsed data
-                    setInfoData(prev => ({
-                        ...prev,
-                        [datacenter]: parsedData
-                    }));
-                    
                     // Set validation result
+                    let validation;
                     if (datacenterMatch) {
-                        setInfoValidation(prev => ({
-                            ...prev,
-                            [datacenter]: {
-                                success: true,
-                                message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter: ${fileDatacenter} ✓`
-                            }
-                        }));
+                        validation = {
+                            success: true,
+                            message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter: ${fileDatacenter} ✓`
+                        };
                     } else {
-                        setInfoValidation(prev => ({
-                            ...prev,
-                            [datacenter]: {
-                                success: false,
-                                message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter mismatch: expected "${datacenter}" but found "${fileDatacenter}"`
-                            }
-                        }));
+                        validation = {
+                            success: false,
+                            message: `Uptime: ${parsedData.uptime_seconds} seconds, Datacenter mismatch: expected "${datacenter}" but found "${fileDatacenter}"`
+                        };
                     }
+                    onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
             } catch (error) {
                 console.error(`Error parsing info file for ${datacenter}:`, error);
                 
                 // Set validation error
-                setInfoValidation(prev => ({
-                    ...prev,
-                    [datacenter]: {
-                        success: false,
-                        message: `Error parsing file: ${error.message}`
-                    }
-                }));
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
             }
         }
 
@@ -369,13 +328,11 @@ function CassandraInput() {
                     console.error('No valid schema data found in file for datacenter:', datacenter);
                     
                     // Set validation error
-                    setSchemaValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: false,
-                            message: 'No valid schema data found in file'
-                        }
-                    }));
+                    const validation = {
+                        success: false,
+                        message: 'No valid schema data found in file'
+                    };
+                    onFileChange(datacenter, fileType, file, null, validation);
                 } else {
                     // Count total tables across all keyspaces
                     let totalTables = 0;
@@ -386,32 +343,22 @@ function CassandraInput() {
                     console.log(`Successfully parsed schema for ${datacenter}:`, parsedData);
                     console.log(`Total tables found: ${totalTables}`);
                     
-                    // Store the parsed data
-                    setSchemaData(prev => ({
-                        ...prev,
-                        [datacenter]: parsedData
-                    }));
-                    
                     // Set validation success
-                    setSchemaValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: true,
-                            message: `Successfully parsed ${totalTables} tables from ${Object.keys(parsedData).length} keyspaces`
-                        }
-                    }));
+                    const validation = {
+                        success: true,
+                        message: `Successfully parsed ${totalTables} tables from ${Object.keys(parsedData).length} keyspaces`
+                    };
+                    onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
             } catch (error) {
                 console.error(`Error parsing schema file for ${datacenter}:`, error);
                 
                 // Set validation error
-                setSchemaValidation(prev => ({
-                    ...prev,
-                    [datacenter]: {
-                        success: false,
-                        message: `Error parsing file: ${error.message}`
-                    }
-                }));
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
             }
         }
 
@@ -426,13 +373,11 @@ function CassandraInput() {
                     console.error('No valid row size data found in file for datacenter:', datacenter);
                     
                     // Set validation error
-                    setRowSizeValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: false,
-                            message: 'No valid row size data found in file'
-                        }
-                    }));
+                    const validation = {
+                        success: false,
+                        message: 'No valid row size data found in file'
+                    };
+                    onFileChange(datacenter, fileType, file, null, validation);
                 } else {
                     // Count total tables
                     const totalTables = Object.keys(parsedData).length;
@@ -440,32 +385,22 @@ function CassandraInput() {
                     console.log(`Successfully parsed row size data for ${datacenter}:`, parsedData);
                     console.log(`Total tables found: ${totalTables}`);
                     
-                    // Store the parsed data
-                    setRowSizeData(prev => ({
-                        ...prev,
-                        [datacenter]: parsedData
-                    }));
-                    
                     // Set validation success
-                    setRowSizeValidation(prev => ({
-                        ...prev,
-                        [datacenter]: {
-                            success: true,
-                            message: `Successfully parsed row size data for ${totalTables} tables`
-                        }
-                    }));
+                    const validation = {
+                        success: true,
+                        message: `Successfully parsed row size data for ${totalTables} tables`
+                    };
+                    onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
             } catch (error) {
                 console.error(`Error parsing row size file for ${datacenter}:`, error);
                 
                 // Set validation error
-                setRowSizeValidation(prev => ({
-                    ...prev,
-                    [datacenter]: {
-                        success: false,
-                        message: `Error parsing file: ${error.message}`
-                    }
-                }));
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
             }
         }
     };
@@ -506,33 +441,23 @@ function CassandraInput() {
             const result = getKeyspaceCassandraAggregate(buildCassandraLocalSet(samples, statusData), datacenterName);
             console.log('Estimation result:', result);
             
-            // Set success message
-            setEstimateValidation(prev => ({
-                ...prev,
-                [datacenterName]: {
-                    success: true,
-                    message: `Estimate for this region ${regions[datacenterName]} provided below`
-                }
-            }));
-
-            // Store the estimation result
-            setEstimateResults(prev => ({
-                ...prev,
-                [datacenterName]: result
-            }));
+            // Call the parent handler
+            const validation = {
+                success: true,
+                message: `Estimate for this region ${regions[datacenterName]} provided below`
+            };
+            onEstimate(datacenterName, result, validation);
         } catch (error) {
             console.error(`Error during estimation for this datacenter: ${datacenterName}:`, error);
             
             // Set failure message
-            setEstimateValidation(prev => ({
-                ...prev,
-                [datacenterName]: {
-                    success: false,
-                    message: `Estimation failed: ${error.message}`
-                }
-            }));
+            const validation = {
+                success: false,
+                message: `Estimation failed: ${error.message}`
+            };
+            onEstimate(datacenterName, null, validation);
         }
-    };
+    }; 
 
     // Example usage of the mapping functions
     const getCurrentDatacenterRegion = (datacenterName) => {
@@ -543,12 +468,243 @@ function CassandraInput() {
         return getDatacenterRegionMap(regions);
     };
 
+    // Check if all datacenters have estimation results
+    const allDatacentersHaveResults = () => {
+        return datacenters.length > 0 && datacenters.every(dc => 
+            estimateResults[dc.name] && estimateValidation[dc.name]?.success
+        );
+    };
+
+    // Calculate pricing estimate
+    const calculatePricingEstimate = () => {
+        if (!allDatacentersHaveResults()) return null;
+
+        const pricingData = {};
+        let totalMonthlyCost = 0;
+
+        datacenters.forEach(dc => {
+            const region = regions[dc.name];
+            const results = estimateResults[dc.name];
+            
+            if (results && region) {
+                // Get pricing data for this region
+                const regionPricing = getRegionPricing(region);
+                
+                if (!regionPricing) {
+                    console.warn(`No pricing data available for region: ${region}`);
+                    return;
+                }
+
+                // Calculate costs for this datacenter
+                let datacenterCost = 0;
+                const keyspaceCosts = {};
+                keyspaceCosts['totals'] = {
+                    storage: 0,
+                    backup: 0,
+                    reads_provisioned: 0,
+                    writes_provisioned: 0,
+                    ttlDeletes: 0,
+                    total: 0
+                };
+
+                Object.entries(results).forEach(([keyspace, data]) => {
+                    // Calculate monthly costs using real AWS pricing
+                    const storageCost = data.uncompressed_single_replica_gb * regionPricing.storagePricePerGB;
+                    
+                    const backupCost = data.uncompressed_single_replica_gb * regionPricing.pitrPricePerGB;
+                    
+                    // Convert per-second rates to monthly (seconds in a month)
+                    const monthlyReads = data.reads_per_second * HOURS_PER_MONTH;
+                    
+                    const monthlyWrites = data.writes_per_second * HOURS_PER_MONTH;
+                    
+                    const monthlyTtlDeletes = data.ttls_per_second * SECONDS_PER_MONTH;
+                    
+                    // Calculate read/write costs (pricing is per unit, not per million)
+                    const readCost = monthlyReads * regionPricing.readRequestPricePerHour/.70;
+                    
+                    const writeCost = monthlyWrites * regionPricing.writeRequestPricePerHour/.70;
+                    
+                    // Calculate TTL delete costs
+                    const ttlDeleteCost = monthlyTtlDeletes * regionPricing.ttlDeletesPrice;
+
+                    const keyspaceTotal = storageCost + readCost + writeCost + ttlDeleteCost + backupCost;
+                    
+                    keyspaceCosts[keyspace] = {
+                        name: keyspace,
+                        storage: storageCost,
+                        backup: backupCost,
+                        reads_provisioned: readCost,
+                        writes_provisioned: writeCost,
+                        ttlDeletes: ttlDeleteCost,
+                        total: keyspaceTotal
+                    };
+                    keyspaceCosts['totals'].name = 'region total';
+                    keyspaceCosts['totals'].storage+= storageCost;
+                    keyspaceCosts['totals'].backup+= backupCost;
+                    keyspaceCosts['totals'].reads_provisioned+= readCost;
+                    keyspaceCosts['totals'].writes_provisioned+= writeCost;
+                    keyspaceCosts['totals'].ttlDeletes+= ttlDeleteCost;
+                    keyspaceCosts['totals'].total+= keyspaceTotal;
+                    
+                    datacenterCost += keyspaceTotal;
+                });
+
+                const totals = keyspaceCosts['totals'];
+                delete keyspaceCosts['totals'];
+                keyspaceCosts['totals'] = totals;
+
+                pricingData[dc.name] = {
+                    region,
+                    keyspaceCosts,
+                    totalCost: datacenterCost
+                };
+                
+                totalMonthlyCost += datacenterCost;
+            }
+        });
+
+        return {
+            datacenterCosts: pricingData,
+            totalMonthlyCost
+        };
+    };
+    
+    // Pricing Estimate Component
+    const PricingEstimate = () => {
+        const pricing = calculatePricingEstimate();
+        if (!pricing) return null;
+
+        return (
+            <Container>
+                <SpaceBetween size="l">
+                    <Header variant="h2">Pricing Estimate</Header>
+                    
+                    {Object.entries(pricing.datacenterCosts).map(([datacenter, data]) => (
+                        <Container key={datacenter}>
+                            <SpaceBetween size="m">
+                                <Header variant="h3">
+                                    {datacenter} ({data.region}) - {formatCurrency(data.totalCost)}/month
+                                </Header>
+                                
+                                <Table
+                                    items={Object.entries(data.keyspaceCosts).map(([keyspace, costs]) => ({
+                                        keyspace,
+                                        name: costs.name,
+                                        storage: formatCurrency(costs.storage),
+                                        backup: formatCurrency(costs.backup),
+                                        reads_provisioned: formatCurrency(costs.reads_provisioned),
+                                        writes_provisioned: formatCurrency(costs.writes_provisioned),
+                                        ttlDeletes: formatCurrency(costs.ttlDeletes),
+                                        total: formatCurrency(costs.total)
+                                    }))}eiifcbfhgnkrghifncntkujthgtjuvurebuhhnvkbicl
+                                    
+                                    columnDefinitions={[
+                                        {
+                                            id: 'name',
+                                            header: 'Keyspace',
+                                            cell: item => item.name
+                                        },
+                                        {
+                                            id: 'storage',
+                                            header: 'Storage',
+                                            cell: item => item.storage
+                                        },
+                                        {
+                                            id: 'backup',
+                                            header: 'Point In Time Recovery',
+                                            cell: item => item.backup
+                                        },
+                                        {
+                                            id: 'reads_provisioned',
+                                            header: 'Provsioned Reads',
+                                            cell: item => item.reads_provisioned
+                                        },
+                                        {
+                                            id: 'writes_provisioned',
+                                            header: 'Provisioned Writes',
+                                            cell: item => item.writes_provisioned
+                                        },
+                                        {
+                                            id: 'ttlDeletes',
+                                            header: 'TTL Deletes',
+                                            cell: item => item.ttlDeletes
+                                        },
+                                        {
+                                            id: 'total',
+                                            header: 'Monthly Total',
+                                            cell: item => item.total
+                                        }
+                                    ]}
+                                    sortingDisabled
+                                    variant="bordered"
+                                />
+                            </SpaceBetween>
+                        </Container>
+                    ))}
+                    
+                    <Alert type="info">
+                        <strong>Total Estimated Monthly Cost: {formatCurrency(pricing.totalMonthlyCost)}</strong>
+                        <br />
+                        Note: This estimate uses Amazon Keyspaces pricing for the selected regions. Costs are calculated based on usage patterns from your Cassandra cluster data.
+                    </Alert>
+                </SpaceBetween>
+            </Container>
+        );
+    };
+    class SafeRender extends React.Component {
+        state = { hasError: false }
+        static getDerivedStateFromError() { return { hasError: true }; }
+        render() {
+          if (this.state.hasError) return <Alert type="error">Error rendering table</Alert>;
+          return this.props.children;
+        }
+    }
+
+    // Simple error boundary for ResizeObserver issues
+    class TableErrorBoundary extends React.Component {
+        constructor(props) {
+            super(props);
+            this.state = { hasError: false };
+        }
+
+        static getDerivedStateFromError(error) {
+            // Only catch ResizeObserver errors
+            if (error && error.message && error.message.includes('ResizeObserver')) {
+                return { hasError: true };
+            }
+            return null;
+        }
+
+        componentDidCatch(error, errorInfo) {
+            // Suppress ResizeObserver errors
+            if (error && error.message && error.message.includes('ResizeObserver')) {
+                console.warn('ResizeObserver error suppressed');
+                return;
+            }
+            console.error('Table error:', error, errorInfo);
+        }
+
+        render() {
+            if (this.state.hasError) {
+                return (
+                    <div style={{ height: '400px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Box textAlign="center" color="text-body-secondary">
+                            Table temporarily unavailable
+                        </Box>
+                    </div>
+                );
+            }
+            return this.props.children;
+        }
+    }
+
     return (
-        <Container>
+        <Container key="cassandra-input">
             <SpaceBetween size="l">
                 <FormField
                     label="Nodetool Status File"
-                    description="Upload the output from `nodetool status` command. This file contains information about datacenters and nodes in your Cassandra cluster."
+                    description="Upload the output from `nodetool status` command. This file contains the number ofdatacenters and nodes in your Apache Cassandra cluster."
                 >
                     <FileUpload
                         onChange={handleStatusFileChange}
@@ -562,10 +718,10 @@ function CassandraInput() {
                 {datacenters.length > 0 && (
                     <SpaceBetween size="l">
                         {datacenters.map((datacenter) => (
-                            <Container key={datacenter.name}>
+                            <Container key={datacenter.name} data-datacenter={datacenter.name}>
                                 <SpaceBetween size="l">
                                     <Header variant="h2">
-                                        {datacenter.name}: {datacenter.nodeCount} nodes
+                                        Cassandra Datacenter: {datacenter.name} ({datacenter.nodeCount} nodes) → AWS Region: {regions[datacenter.name] || 'Not selected'}
                                     </Header>
                                     
                                     <FormField
@@ -577,6 +733,7 @@ function CassandraInput() {
                                             onChange={(detail) => handleRegionChange(datacenter.name, detail)}
                                             options={regionOptions}
                                             placeholder="Choose a region"
+                                            data-region-select="true"
                                         />
                                     </FormField>
 
@@ -625,7 +782,7 @@ function CassandraInput() {
 
                                         <FormField
                                             label="Schema File"
-                                            description="Upload the Cassandra schema file (output from `cqlsh -e 'DESCRIBE SCHEMA'`) for this datacenter"
+                                            description="Upload the Cassandra schema file. (output from cqlsh -e 'DESCRIBE SCHEMA')"
                                         >
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'schema', detail)}
@@ -646,7 +803,7 @@ function CassandraInput() {
 
                                         <FormField
                                             label="Row Size Sampler File"
-                                            description="Upload the row size sampler output file for this datacenter"
+                                            description={<p>Upload the row size sampler output file for this datacenter. The script is available here. <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/row-size-sampler.sh' target='_blank' rel='noopener noreferrer'>row-size-sampler.sh</a></p>}
                                         >
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'rowSize', detail)}
@@ -684,21 +841,33 @@ function CassandraInput() {
                                             </Alert>
                                         )}
                                         
-                                        {estimateResults[datacenter.name] && estimateValidation[datacenter.name]?.success && (
-                                            <FormField
-                                                label="Estimation Results"
-                                                description="Aggregated numbers used for pricing estimates below"
-                                            >
+                                        <FormField
+                                            label="Cassandra sizing details"
+                                            description="The aggregated numbers will be used for pricing estimates"
+                                        >
+                                            
+                                            <TableErrorBoundary>
                                                 <ResultsTable results={estimateResults[datacenter.name]} />
-                                            </FormField>
-                                        )}
+                                            </TableErrorBoundary>
+                                            
+                                        </FormField>
+                                        
                                     </SpaceBetween>
                                 </SpaceBetween>
                             </Container>
+                            
                         ))}
+                        <PricingEstimate />
+                        <Box>
+                                                                <strong>Assumptions:</strong>
+                                                                <ul style={{ marginTop: '8px', marginBottom: '16px' }}>
+                                                                    <li>Provisioned estimate includes 70% target utilization for the Application Auto Scaling policy</li>
+                                                                </ul>
+                                                            </Box>
                     </SpaceBetween>
                 )}
             </SpaceBetween>
+           
         </Container>
     );
 }

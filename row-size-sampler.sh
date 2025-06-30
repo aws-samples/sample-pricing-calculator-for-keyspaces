@@ -31,7 +31,7 @@ fi
 
 echo 'starting...'
 
-SYSTEMKEYSPACEFILTER='system\|system_schema\|system_backups\|system_traces\|system_auth\|reaper_db\|system_distributed_everywhere\|dse_auth\|dse_audit\|dse_security\|dse_leases\|dse_insights_local\|solr_admin\|system_distributed\|dse_perf\|dse_system\|OpsCenter\|cfs\|cfs_archive\|dse_leases\|dsefs\|HiveMetaStore\|spark_system'
+SYSTEMKEYSPACEFILTER='system\|system_schema\|system_traces\|system_auth\|dse_auth\|dse_security\|dse_leases\|system_distributed\|dse_perf\|dse_system\|OpsCenter\|cfs\|cfs_archive\|dse_leases\|dsefs\|HiveMetaStore\|spark_system'
 
 TABLEFILTER='^-\|^table_name\|(\|)'
 

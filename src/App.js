@@ -12,7 +12,8 @@ import {
     Container,
     Tabs,
     Box,
-    SpaceBetween
+    SpaceBetween,
+    Header
 } from '@cloudscape-design/components';
 import '@cloudscape-design/global-styles/index.css';
 
@@ -35,6 +36,198 @@ function App() {
             pointInTimeRecoveryForBackups: false
         }
     });
+
+    // Cassandra-related state
+    const [cassandraStatusFile, setCassandraStatusFile] = useState(null);
+    const [cassandraDatacenters, setCassandraDatacenters] = useState([]);
+    const [cassandraRegions, setCassandraRegions] = useState({});
+    const [cassandraDatacenterFiles, setCassandraDatacenterFiles] = useState({});
+    const [cassandraTablestatsData, setCassandraTablestatsData] = useState({});
+    const [cassandraInfoData, setCassandraInfoData] = useState({});
+    const [cassandraSchemaData, setCassandraSchemaData] = useState({});
+    const [cassandraRowSizeData, setCassandraRowSizeData] = useState({});
+    const [cassandraTablestatsValidation, setCassandraTablestatsValidation] = useState({});
+    const [cassandraInfoValidation, setCassandraInfoValidation] = useState({});
+    const [cassandraSchemaValidation, setCassandraSchemaValidation] = useState({});
+    const [cassandraRowSizeValidation, setCassandraRowSizeValidation] = useState({});
+    const [cassandraEstimateValidation, setCassandraEstimateValidation] = useState({});
+    const [cassandraEstimateResults, setCassandraEstimateResults] = useState({});
+
+    // Cassandra handler functions
+    const handleCassandraStatusFileChange = (file, datacenters) => {
+        setCassandraStatusFile(file);
+        setCassandraDatacenters(datacenters);
+        
+        // Initialize state for each datacenter
+        const initialRegions = {};
+        const initialFiles = {};
+        const initialTablestats = {};
+        const initialInfo = {};
+        const initialSchema = {};
+        const initialRowSize = {};
+        const initialTablestatsValidation = {};
+        const initialInfoValidation = {};
+        const initialSchemaValidation = {};
+        const initialRowSizeValidation = {};
+        const initialEstimateValidation = {};
+        const initialEstimateResults = {};
+        
+        datacenters.forEach(dc => {
+            initialRegions[dc.name] = 'US East (N. Virginia)'; // Set default region
+            initialFiles[dc.name] = {
+                tablestats: null,
+                info: null,
+                schema: null,
+                rowSize: null
+            };
+            initialTablestats[dc.name] = null;
+            initialInfo[dc.name] = null;
+            initialSchema[dc.name] = null;
+            initialRowSize[dc.name] = null;
+            initialTablestatsValidation[dc.name] = null;
+            initialInfoValidation[dc.name] = null;
+            initialSchemaValidation[dc.name] = null;
+            initialRowSizeValidation[dc.name] = null;
+            initialEstimateValidation[dc.name] = null;
+            initialEstimateResults[dc.name] = null;
+        });
+        
+        setCassandraRegions(initialRegions);
+        setCassandraDatacenterFiles(initialFiles);
+        setCassandraTablestatsData(initialTablestats);
+        setCassandraInfoData(initialInfo);
+        setCassandraSchemaData(initialSchema);
+        setCassandraRowSizeData(initialRowSize);
+        setCassandraTablestatsValidation(initialTablestatsValidation);
+        setCassandraInfoValidation(initialInfoValidation);
+        setCassandraSchemaValidation(initialSchemaValidation);
+        setCassandraRowSizeValidation(initialRowSizeValidation);
+        setCassandraEstimateValidation(initialEstimateValidation);
+        setCassandraEstimateResults(initialEstimateResults);
+    };
+
+    const handleCassandraRegionChange = (datacenter, region) => {
+        setCassandraRegions(prev => ({
+            ...prev,
+            [datacenter]: region
+        }));
+    };
+
+    const handleCassandraFileChange = (datacenter, fileType, file, parsedData, validation) => {
+        // Update file state
+        setCassandraDatacenterFiles(prev => ({
+            ...prev,
+            [datacenter]: {
+                ...prev[datacenter],
+                [fileType]: file
+            }
+        }));
+
+        // Update parsed data state
+        if (parsedData) {
+            switch (fileType) {
+                case 'tablestats':
+                    setCassandraTablestatsData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                    break;
+                case 'info':
+                    setCassandraInfoData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                    break;
+                case 'schema':
+                    setCassandraSchemaData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                    break;
+                case 'rowSize':
+                    setCassandraRowSizeData(prev => ({
+                        ...prev,
+                        [datacenter]: parsedData
+                    }));
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Update validation state
+        if (validation) {
+            switch (fileType) {
+                case 'tablestats':
+                    setCassandraTablestatsValidation(prev => ({
+                        ...prev,
+                        [datacenter]: validation
+                    }));
+                    break;
+                case 'info':
+                    setCassandraInfoValidation(prev => ({
+                        ...prev,
+                        [datacenter]: validation
+                    }));
+                    break;
+                case 'schema':
+                    setCassandraSchemaValidation(prev => ({
+                        ...prev,
+                        [datacenter]: validation
+                    }));
+                    break;
+                case 'rowSize':
+                    setCassandraRowSizeValidation(prev => ({
+                        ...prev,
+                        [datacenter]: validation
+                    }));
+                    break;
+                default:
+                    break;
+            }
+        }
+    };
+
+    const handleCassandraEstimate = (datacenterName, result, validation) => {
+        setCassandraEstimateValidation(prev => ({
+            ...prev,
+            [datacenterName]: validation
+        }));
+        setCassandraEstimateResults(prev => ({
+            ...prev,
+            [datacenterName]: result
+        }));
+    };
+
+    // Function to get datacenter-region mappings
+    const getCassandraDatacenterRegionMap = () => {
+        const mapping = {};
+        Object.entries(cassandraRegions).forEach(([datacenter, region]) => {
+            if (region) {
+                mapping[datacenter] = region;
+            }
+        });
+        return mapping;
+    };
+
+    // Function to get datacenter-region mappings by inspecting the DOM
+    const getDatacenterRegionMapFromDOM = () => {
+        const mapping = {};
+        
+        // Find all datacenter sections in the DOM
+        const datacenterSections = document.querySelectorAll('[data-datacenter]');
+        
+        datacenterSections.forEach(section => {
+            const datacenterName = section.getAttribute('data-datacenter');
+            const regionSelect = section.querySelector('select[data-region-select]');
+            
+            if (regionSelect && regionSelect.value) {
+                mapping[datacenterName] = regionSelect.value;
+            }
+        });
+        
+        return mapping;
+    };
 
     useEffect(() => {
         setCurrentPricing(processRegion('US East (N. Virginia)'));
@@ -255,38 +448,27 @@ function App() {
                                                     setExpandedRegions={setExpandedRegions}
                                                 />
 
-                                                <Tabs
-                                                    activeTabId={activeTab}
-                                                    onChange={({ detail }) => setActiveTab(detail.activeTabId)}
-                                                    tabs={[
-                                                        {
-                                                            label: "Calculator",
-                                                            id: "calculator",
-                                                            content: (
-                                                                <Box padding={{ top: "l" }}>
-                                                                    {provisionedPricing && Object.keys(provisionedPricing).length > 0 && (
-                                                                        <PricingTable 
-                                                                            provisionedPricing={provisionedPricing}
-                                                                            onDemandPricing={onDemandPricing}
-                                                                            formData={formData}
-                                                                            selectedRegion={selectedRegion}
-                                                                            multiSelectedRegions={multiSelectedRegions}
-                                                                        />
-                                                                    )}
-                                                                </Box>
-                                                            )
-                                                        },
-                                                        {
-                                                            label: "TCO",
-                                                            id: "tco",
-                                                            content: (
-                                                                <Box padding={{ top: "l" }}>
-                                                                    {/* TCO content will be added here later */}
-                                                                </Box>
-                                                            )
-                                                        }
-                                                    ]}
-                                                />
+                                                <Box padding={{ top: "l" }}>
+                                                    {provisionedPricing && Object.keys(provisionedPricing).length > 0 && (
+                                                        <SpaceBetween size="l">
+                                                            <Header variant="h2">Pricing Estimate</Header>
+                                                            
+                                                            <PricingTable 
+                                                                provisionedPricing={provisionedPricing}
+                                                                onDemandPricing={onDemandPricing}
+                                                                formData={formData}
+                                                                selectedRegion={selectedRegion}
+                                                                multiSelectedRegions={multiSelectedRegions}
+                                                            />
+                                                            <Box>
+                                                                <strong>Assumptions:</strong>
+                                                                <ul style={{ marginTop: '8px', marginBottom: '16px' }}>
+                                                                    <li>Provisioned estimate includes 70% target utilization for the Application Auto Scaling policy</li>
+                                                                </ul>
+                                                            </Box>
+                                                        </SpaceBetween>
+                                                    )}
+                                                </Box>
                                             </SpaceBetween>
                                         </Box>
                                     )
@@ -296,7 +478,28 @@ function App() {
                                     id: "advanced",
                                     content: (
                                         <Box padding={{ top: "l" }}>
-                                            <CassandraInput />
+                                            <CassandraInput
+                                                statusFile={cassandraStatusFile}
+                                                datacenters={cassandraDatacenters}
+                                                regions={cassandraRegions}
+                                                datacenterFiles={cassandraDatacenterFiles}
+                                                tablestatsData={cassandraTablestatsData}
+                                                infoData={cassandraInfoData}
+                                                schemaData={cassandraSchemaData}
+                                                rowSizeData={cassandraRowSizeData}
+                                                tablestatsValidation={cassandraTablestatsValidation}
+                                                infoValidation={cassandraInfoValidation}
+                                                schemaValidation={cassandraSchemaValidation}
+                                                rowSizeValidation={cassandraRowSizeValidation}
+                                                estimateValidation={cassandraEstimateValidation}
+                                                estimateResults={cassandraEstimateResults}
+                                                onStatusFileChange={handleCassandraStatusFileChange}
+                                                onRegionChange={handleCassandraRegionChange}
+                                                onFileChange={handleCassandraFileChange}
+                                                onEstimate={handleCassandraEstimate}
+                                                getDatacenterRegionMap={getCassandraDatacenterRegionMap}
+                                                getDatacenterRegionMapFromDOM={getDatacenterRegionMapFromDOM}
+                                            />
                                         </Box>
                                     )
                                 }

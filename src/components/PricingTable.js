@@ -5,7 +5,6 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedRegion, multiSelectedRegions }) {
-  const [showStrong, setShowStrong] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   const calculateTotal = (pricing, consistency) => {
@@ -66,13 +65,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     },
   ];
 
-  const handleToggleStrong = useCallback(() => {
-    setIsTransitioning(true);
-    setTimeout(() => {
-      setShowStrong(prev => !prev);
-      setIsTransitioning(false);
-    }, 0);
-  }, []);
+  
 
   const tableItems = [
     { 
@@ -312,18 +305,13 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
     <SpaceBetween size="m">
       <Box float="right">
         <Link onFollow={exportToPDF} href="#">
-          Export to PDF
+          Generate Report
         </Link>
       </Box>
-      <Button
-        onClick={handleToggleStrong}
-        disabled={isTransitioning}
-      >
-        {showStrong ? 'Hide Strong Consistency' : 'Show Strong Consistency'}
-      </Button>
+      
       {!isTransitioning && (
         <Table
-          columnDefinitions={showStrong ? allColumns : baseColumns}
+          columnDefinitions={allColumns}
           items={tableItems}
           variant="embedded"
           stickyHeader={false}
