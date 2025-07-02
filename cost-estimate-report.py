@@ -1534,6 +1534,8 @@ def main():
     parser.add_argument('--row-size-file', help='Path to the file containing row size information')
     parser.add_argument('--number-of-nodes', type=Decimal,
                         help='Number of nodes in the cluster (must be a number)', default=0)
+    parser.add_argument('--number-of-datacenters', type=Decimal,
+                        help='Number of datacenters in the cluster (must be a number)', default=1)
     parser.add_argument('--single-keyspace', type=str, default=None,
                         help='Calculate a single keyspace. Leave out to calculate all keyspaces')
     parser.add_argument('--schema-file', type=str, default=None,
@@ -1543,12 +1545,14 @@ def main():
     args = parser.parse_args()
 
     number_of_nodes = args.number_of_nodes
+
+    number_of_datacenters = args.number_of_datacenters
     
     report_name = args.report_name
 
     # Print parameters for debugging
     print("Parameters:", report_name, args.table_stats_file, args.info_file, args.row_size_file,
-          args.status_file, number_of_nodes)
+          args.status_file, number_of_nodes, number_of_datacenters)
 
     # Read the tablestats output file
     with open(args.table_stats_file, 'r') as f:
@@ -1576,10 +1580,12 @@ def main():
     # Parse the rowsize data (to get uptime)
     row_size_data = parse_row_size_info(row_size_lines)
     
-    number_of_nodes = 0
-
-    if(args.number_of_nodes > 0):
-        number_of_nodes = args.number_of_nodes
+    if(number_of_datacenters > 0):
+        status_data['datacenters'] = {
+            'dc1': {
+                'node_count': number_of_nodes
+            }
+        }
     else:
         with open(args.status_file, 'r') as f:
             status_lines = f.readlines()
@@ -1598,9 +1604,6 @@ def main():
     
     single_keyspace = args.single_keyspace
     
-    uptime_seconds = info_data['uptime_seconds']
-
-   
     
     #totals = calculate_totals(tablestats_data, uptime_seconds, row_size_data, number_of_nodes, single_keyspace)
     

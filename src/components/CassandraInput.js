@@ -101,7 +101,8 @@ const ResultsTable = ({ results }) => {
             avg_row_size_bytes: Math.round(data.avg_row_size_bytes),
             total_live_space_gb: Math.round(data.total_live_space_gb),
             ttls_per_second: Math.round(data.ttls_per_second),
-            uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb)
+            uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb),
+            replication_factor: data.replication_factor
         }));
     }, [results]);
 
@@ -156,7 +157,14 @@ const ResultsTable = ({ results }) => {
                         header: 'ttl deletes per second',
                         cell: item => item.ttls_per_second,
                         align: 'right'
+                    },
+                    {
+                        id: 'replication_factor',
+                        header: 'replication factor',
+                        cell: item => item.replication_factor,
+                        align: 'right'
                     }
+
                 ]}
                 sortingDisabled
                 variant="bordered"
@@ -165,6 +173,8 @@ const ResultsTable = ({ results }) => {
                         Click "Estimate" to see sizing details
                     </Box>
                 }
+            
+                
             />
         </div>
     );
@@ -239,18 +249,21 @@ const ResultsTable = ({ results }) => {
                 } else {
                     // Count total tables across all keyspaces
                     let totalTables = 0;
-                    let totalKeysapces = Object.keys(parsedData).length 
+                    let totalKeyspaces = 0;
                     Object.values(parsedData).forEach(keyspace => {
-                        totalTables += Object.keys(keyspace).length;
+                        if (keyspace.type !== 'system') {
+                            totalKeyspaces++;
+                            totalTables += Object.keys(keyspace).length;
+                        }
                     });
                     
                     console.log(`Successfully parsed tablestats for ${datacenter}:`, parsedData);
-                    console.log(`Total system and user tables ${totalTables} and keyspaces ${totalKeysapces}` );
+                    console.log(`Total user tables ${totalTables} and keyspaces ${totalKeyspaces}` );
                     
                     // Set validation success
                     const validation = {
                         success: true,
-                        message: `Successfully parsed ${totalTables} user definedtables from ${Object.keys(parsedData).length} keyspaces`
+                        message: `Successfully parsed ${totalTables} user definedtables from ${totalKeyspaces} keyspaces`
                     };
                     onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
@@ -508,42 +521,59 @@ const ResultsTable = ({ results }) => {
                 };
 
                 Object.entries(results).forEach(([keyspace, data]) => {
+
+                    console.log('Data:', data);
+
+                    const avg_row_size_bytes = data.avg_row_size_bytes;
+                    
+                    const write_units_per_operation = Math.ceil(avg_row_size_bytes / 1024);
+                   
+                    const ttl_units_per_operation = Math.ceil(avg_row_size_bytes / 1024);
+
+                    const read_units_per_operation = Math.ceil(avg_row_size_bytes / 4096);
+                   
                     // Calculate monthly costs using real AWS pricing
                     const storageCost = data.uncompressed_single_replica_gb * regionPricing.storagePricePerGB;
                     
                     const backupCost = data.uncompressed_single_replica_gb * regionPricing.pitrPricePerGB;
                     
                     // Convert per-second rates to monthly (seconds in a month)
-                    const monthlyReads = data.reads_per_second * HOURS_PER_MONTH;
+                    const ondemandReadPrice = data.reads_per_second * read_units_per_operation * HOURS_PER_MONTH * regionPricing.readRequestPrice
                     
-                    const monthlyWrites = data.writes_per_second * HOURS_PER_MONTH;
+                    const ondemandWritePrice = data.writes_per_second * write_units_per_operation * HOURS_PER_MONTH * regionPricing.writeRequestPrice
                     
-                    const monthlyTtlDeletes = data.ttls_per_second * SECONDS_PER_MONTH;
+                    const monthlyTtlDeletes = data.ttls_per_second * ttl_units_per_operation * SECONDS_PER_MONTH;
+                    
+
                     
                     // Calculate read/write costs (pricing is per unit, not per million)
-                    const readCost = monthlyReads * regionPricing.readRequestPricePerHour/.70;
+                    const provisionReadCost = data.reads_per_second * read_units_per_operation * HOURS_PER_MONTH * regionPricing.readRequestPricePerHour/.70;
                     
-                    const writeCost = monthlyWrites * regionPricing.writeRequestPricePerHour/.70;
+                    const provisionWriteCost = data.writes_per_second * write_units_per_operation * HOURS_PER_MONTH * regionPricing.writeRequestPricePerHour/.70;
                     
                     // Calculate TTL delete costs
                     const ttlDeleteCost = monthlyTtlDeletes * regionPricing.ttlDeletesPrice;
 
-                    const keyspaceTotal = storageCost + readCost + writeCost + ttlDeleteCost + backupCost;
+                    const keyspaceTotal = storageCost + provisionReadCost + provisionWriteCost + ttlDeleteCost + backupCost;
                     
                     keyspaceCosts[keyspace] = {
                         name: keyspace,
                         storage: storageCost,
                         backup: backupCost,
-                        reads_provisioned: readCost,
-                        writes_provisioned: writeCost,
+                        reads_provisioned: provisionReadCost,
+                        writes_provisioned: provisionWriteCost,
+                        reads_on_demand: ondemandReadPrice,
+                        writes_on_demand: ondemandWritePrice,
                         ttlDeletes: ttlDeleteCost,
                         total: keyspaceTotal
                     };
                     keyspaceCosts['totals'].name = 'region total';
                     keyspaceCosts['totals'].storage+= storageCost;
                     keyspaceCosts['totals'].backup+= backupCost;
-                    keyspaceCosts['totals'].reads_provisioned+= readCost;
-                    keyspaceCosts['totals'].writes_provisioned+= writeCost;
+                    keyspaceCosts['totals'].reads_provisioned+= provisionReadCost;
+                    keyspaceCosts['totals'].writes_provisioned+= provisionWriteCost;
+                    keyspaceCosts['totals'].reads_on_demand+= ondemandReadPrice;
+                    keyspaceCosts['totals'].writes_on_demand+= ondemandWritePrice;
                     keyspaceCosts['totals'].ttlDeletes+= ttlDeleteCost;
                     keyspaceCosts['totals'].total+= keyspaceTotal;
                     
@@ -598,7 +628,7 @@ const ResultsTable = ({ results }) => {
                                         ttlDeletes: formatCurrency(costs.ttlDeletes),
                                         total: formatCurrency(costs.total)
                                     }))}eiifcbfhgnkrghifncntkujthgtjuvurebuhhnvkbicl
-                                    
+
                                     columnDefinitions={[
                                         {
                                             id: 'name',
@@ -847,7 +877,7 @@ const ResultsTable = ({ results }) => {
                                         >
                                             
                                             <TableErrorBoundary>
-                                                <ResultsTable results={estimateResults[datacenter.name]} />
+                                                <ResultsTable results={estimateResults[datacenter.name]} scrollbar={true} />
                                             </TableErrorBoundary>
                                             
                                         </FormField>

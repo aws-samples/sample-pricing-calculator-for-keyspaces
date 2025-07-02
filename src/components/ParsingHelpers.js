@@ -88,40 +88,36 @@ export const getKeyspaceCassandraAggregate=(cassandra_set, datacenter) => {
         let table_count = Object.keys(keyspaceData.dcs[datacenter].tables).length;
 
         let keyspace_writes_total = 0;
-        for (const [table, tableData] of Object.entries(keyspaceData.dcs[datacenter].tables)) {
-            if (!keyspace_aggregate[keyspace]) {
-                keyspace_aggregate[keyspace] = {
-                    keyspace_type: keyspaceData.type,
-                    total_live_space_gb: 0,
-                    uncompressed_single_replica_gb: 0,
-                    avg_row_size_bytes: 0,
-                    writes_per_second: 0,
-                    ttls_per_second: 0,
-                    reads_per_second: 0,
-                    sample_count: tableData.sample_count 
-                }
-            }
-            keyspace_writes_total += tableData.writes_monthly/ tableData.sample_count;
+        let keyspace_reads_total = 0;
+        let total_live_space = 0;
+        let uncompressed_single_replica = 0;
+        let row_size_bytes = 0;
+        let keyspace_ttls_total = 0;
 
-            keyspace_aggregate[keyspace].total_live_space_gb += tableData.total_compressed_bytes/ tableData.sample_count;
-            keyspace_aggregate[keyspace].uncompressed_single_replica_gb += tableData.total_uncompressed_bytes/ tableData.sample_count;
-            keyspace_aggregate[keyspace].avg_row_size_bytes += tableData.writes_monthly * tableData.avg_row_size_bytes / tableData.sample_count;
-            keyspace_aggregate[keyspace].writes_per_second += tableData.writes_monthly / tableData.sample_count;
-            keyspace_aggregate[keyspace].reads_per_second += tableData.reads_monthly / tableData.sample_count;
-            keyspace_aggregate[keyspace].ttls_per_second += (tableData.has_ttl ? tableData.writes_monthly/tableData.sample_count : 0);
+
+        for (const [table, tableData] of Object.entries(keyspaceData.dcs[datacenter].tables)) {
+            
+            keyspace_writes_total += tableData.writes_monthly/ tableData.sample_count;
+            total_live_space += tableData.total_compressed_bytes/ tableData.sample_count;
+            uncompressed_single_replica += tableData.total_uncompressed_bytes/ tableData.sample_count;
+            row_size_bytes += tableData.writes_monthly * tableData.avg_row_size_bytes / tableData.sample_count;
+            keyspace_reads_total += tableData.reads_monthly / tableData.sample_count;
+            keyspace_ttls_total += (tableData.has_ttl ? tableData.writes_monthly/tableData.sample_count : 0);
             
         }
-        console.log("read total: " + keyspace_aggregate[keyspace].reads_per_second);
-        keyspace_aggregate[keyspace].avg_row_size_bytes = keyspace_aggregate[keyspace].avg_row_size_bytes/ keyspace_writes_total;
-        keyspace_aggregate[keyspace].writes_per_second = keyspace_aggregate[keyspace].writes_per_second / SECONDS_PER_MONTH * number_of_nodes/replication_factor;
-        keyspace_aggregate[keyspace].reads_per_second = keyspace_aggregate[keyspace].reads_per_second/ SECONDS_PER_MONTH * number_of_nodes * ((replication_factor - 1 > 0)? replication_factor -1: 1);
-        keyspace_aggregate[keyspace].ttls_per_second = keyspace_aggregate[keyspace].ttls_per_second  / SECONDS_PER_MONTH * number_of_nodes/replication_factor;
-        keyspace_aggregate[keyspace].total_live_space_gb = keyspace_aggregate[keyspace].total_live_space_gb  * number_of_nodes / GIGABYTE;
-        keyspace_aggregate[keyspace].uncompressed_single_replica_gb = keyspace_aggregate[keyspace].uncompressed_single_replica_gb * number_of_nodes / replication_factor / GIGABYTE;
+
+        keyspace_aggregate[keyspace] = {
+            keyspace_type: keyspaceData.type,
+            replication_factor: replication_factor,
+            total_live_space_gb: total_live_space  * number_of_nodes / GIGABYTE,
+            uncompressed_single_replica_gb: uncompressed_single_replica * number_of_nodes / replication_factor / GIGABYTE,
+            avg_row_size_bytes: row_size_bytes / keyspace_writes_total,
+            writes_per_second: keyspace_writes_total / SECONDS_PER_MONTH * number_of_nodes/replication_factor,
+            reads_per_second: keyspace_reads_total/ SECONDS_PER_MONTH * number_of_nodes /((replication_factor - 1 > 0)? replication_factor -1: 1),
+            ttls_per_second: keyspace_ttls_total  / SECONDS_PER_MONTH * number_of_nodes/replication_factor,
+        }
         
-       
     }
-    console.log(keyspace_aggregate);
     return keyspace_aggregate;
 }
 export const buildCassandraLocalSet = (samples, statusData) => {
