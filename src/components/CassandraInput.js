@@ -739,9 +739,9 @@ const ResultsTable = ({ results }) => {
                     <FileUpload
                         onChange={handleStatusFileChange}
                         value={statusFile ? [statusFile] : []}
-                        accept=".txt"
+                        
                         i18nStrings={fileUploadI18nStrings}
-                        constraintText="Upload a .txt file"
+                        constraintText="Upload a file containing output of nodetool stauts"
                     />
                 </FormField>
 
@@ -775,9 +775,9 @@ const ResultsTable = ({ results }) => {
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'tablestats', detail)}
                                                 value={datacenterFiles[datacenter.name]?.tablestats ? [datacenterFiles[datacenter.name].tablestats] : []}
-                                                accept=".txt"
+                                               
                                                 i18nStrings={fileUploadI18nStrings}
-                                                constraintText="Upload a .txt file"
+                                                constraintText="Upload a file containing output of nodetool tablestats"
                                             />
                                             {tablestatsValidation[datacenter.name] && (
                                                 <Alert
@@ -796,9 +796,8 @@ const ResultsTable = ({ results }) => {
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'info', detail)}
                                                 value={datacenterFiles[datacenter.name]?.info ? [datacenterFiles[datacenter.name].info] : []}
-                                                accept=".txt"
                                                 i18nStrings={fileUploadI18nStrings}
-                                                constraintText="Upload a .txt file"
+                                                constraintText="Upload a file containing output of nodetool info"
                                             />
                                             {infoValidation[datacenter.name] && (
                                                 <Alert
@@ -817,9 +816,8 @@ const ResultsTable = ({ results }) => {
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'schema', detail)}
                                                 value={datacenterFiles[datacenter.name]?.schema ? [datacenterFiles[datacenter.name].schema] : []}
-                                                accept=".txt,.cql,.sql"
                                                 i18nStrings={fileUploadI18nStrings}
-                                                constraintText="Upload a .txt, .cql, or .sql file"
+                                                constraintText="Upload a file containing output of describe schema"
                                             />
                                             {schemaValidation[datacenter.name] && (
                                                 <Alert
@@ -838,9 +836,8 @@ const ResultsTable = ({ results }) => {
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'rowSize', detail)}
                                                 value={datacenterFiles[datacenter.name]?.rowSize ? [datacenterFiles[datacenter.name].rowSize] : []}
-                                                accept=".txt"
                                                 i18nStrings={fileUploadI18nStrings}
-                                                constraintText="Upload a .txt file"
+                                                constraintText="Upload a file containing output of row size sampler script"
                                             />
                                             {rowSizeValidation[datacenter.name] && (
                                                 <Alert
