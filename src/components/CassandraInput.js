@@ -98,7 +98,8 @@ const ResultsTable = ({ results }) => {
             writes_per_second: Math.round(data.writes_per_second),
             reads_per_second: Math.round(data.reads_per_second),
             ttl_deletes_per_second: Math.round(data.ttl_deletes_per_second),
-            avg_row_size_bytes: Math.round(data.avg_row_size_bytes),
+            avg_write_row_size_bytes: Math.round(data.avg_write_row_size_bytes),
+            avg_read_row_size_bytes: Math.round(data.avg_read_row_size_bytes),
             total_live_space_gb: Math.round(data.total_live_space_gb),
             ttls_per_second: Math.round(data.ttls_per_second),
             uncompressed_single_replica_gb: Math.round(data.uncompressed_single_replica_gb),
@@ -137,7 +138,7 @@ const ResultsTable = ({ results }) => {
                     {
                         id: 'avg_row_size_bytes',
                         header: 'Avg row size',
-                        cell: item => item.avg_row_size_bytes,
+                        cell: item => Math.round((item.avg_read_row_size_bytes + item.avg_write_row_size_bytes) / 2),
                         align: 'right'
                     },
                     {
@@ -493,7 +494,8 @@ const ResultsTable = ({ results }) => {
         if (!allDatacentersHaveResults()) return null;
 
         const pricingData = {};
-        let totalMonthlyCost = 0;
+        let total_monthly_provisioned_cost = 0;
+        let total_monthly_on_demand_cost = 0;
 
         datacenters.forEach(dc => {
             const region = regions[dc.name];
@@ -509,28 +511,34 @@ const ResultsTable = ({ results }) => {
                 }
 
                 // Calculate costs for this datacenter
-                let datacenterCost = 0;
+                let total_datacenter_provisioned_cost = 0;
+                let total_datacenter_on_demand_cost = 0;
                 const keyspaceCosts = {};
                 keyspaceCosts['totals'] = {
+                    name: 'region total',
                     storage: 0,
                     backup: 0,
                     reads_provisioned: 0,
                     writes_provisioned: 0,
+                    reads_on_demand: 0,
+                    writes_on_demand: 0,
                     ttlDeletes: 0,
-                    total: 0
+                    provisioned_total: 0,
+                    on_demand_total: 0
                 };
 
                 Object.entries(results).forEach(([keyspace, data]) => {
 
                     console.log('Data:', data);
 
-                    const avg_row_size_bytes = data.avg_row_size_bytes;
+                    const avg_write_row_size_bytes = data.avg_write_row_size_bytes;
+                    const avg_read_row_size_bytes = data.avg_read_row_size_bytes;
                     
-                    const write_units_per_operation = Math.ceil(avg_row_size_bytes / 1024);
+                    const write_units_per_operation = Math.ceil(avg_write_row_size_bytes / 1024);
                    
-                    const ttl_units_per_operation = Math.ceil(avg_row_size_bytes / 1024);
+                    const ttl_units_per_operation = Math.ceil(avg_write_row_size_bytes / 1024);
 
-                    const read_units_per_operation = Math.ceil(avg_row_size_bytes / 4096);
+                    const read_units_per_operation = Math.ceil(avg_read_row_size_bytes / 4096);
                    
                     // Calculate monthly costs using real AWS pricing
                     const storageCost = data.uncompressed_single_replica_gb * regionPricing.storagePricePerGB;
@@ -538,13 +546,11 @@ const ResultsTable = ({ results }) => {
                     const backupCost = data.uncompressed_single_replica_gb * regionPricing.pitrPricePerGB;
                     
                     // Convert per-second rates to monthly (seconds in a month)
-                    const ondemandReadPrice = data.reads_per_second * read_units_per_operation * HOURS_PER_MONTH * regionPricing.readRequestPrice
+                    const ondemandReadPrice = data.reads_per_second * read_units_per_operation * SECONDS_PER_MONTH * regionPricing.readRequestPrice
                     
-                    const ondemandWritePrice = data.writes_per_second * write_units_per_operation * HOURS_PER_MONTH * regionPricing.writeRequestPrice
+                    const ondemandWritePrice = data.writes_per_second * write_units_per_operation * SECONDS_PER_MONTH * regionPricing.writeRequestPrice
                     
                     const monthlyTtlDeletes = data.ttls_per_second * ttl_units_per_operation * SECONDS_PER_MONTH;
-                    
-
                     
                     // Calculate read/write costs (pricing is per unit, not per million)
                     const provisionReadCost = data.reads_per_second * read_units_per_operation * HOURS_PER_MONTH * regionPricing.readRequestPricePerHour/.70;
@@ -554,7 +560,9 @@ const ResultsTable = ({ results }) => {
                     // Calculate TTL delete costs
                     const ttlDeleteCost = monthlyTtlDeletes * regionPricing.ttlDeletesPrice;
 
-                    const keyspaceTotal = storageCost + provisionReadCost + provisionWriteCost + ttlDeleteCost + backupCost;
+                    const provisioned_total = storageCost + backupCost + provisionReadCost + provisionWriteCost + ttlDeleteCost;
+                    
+                    const on_demand_total = storageCost + backupCost + ondemandReadPrice + ondemandWritePrice + ttlDeleteCost;
                     
                     keyspaceCosts[keyspace] = {
                         name: keyspace,
@@ -565,19 +573,21 @@ const ResultsTable = ({ results }) => {
                         reads_on_demand: ondemandReadPrice,
                         writes_on_demand: ondemandWritePrice,
                         ttlDeletes: ttlDeleteCost,
-                        total: keyspaceTotal
+                        provisioned_total: provisioned_total,
+                        on_demand_total: on_demand_total
                     };
-                    keyspaceCosts['totals'].name = 'region total';
                     keyspaceCosts['totals'].storage+= storageCost;
                     keyspaceCosts['totals'].backup+= backupCost;
-                    keyspaceCosts['totals'].reads_provisioned+= provisionReadCost;
-                    keyspaceCosts['totals'].writes_provisioned+= provisionWriteCost;
-                    keyspaceCosts['totals'].reads_on_demand+= ondemandReadPrice;
-                    keyspaceCosts['totals'].writes_on_demand+= ondemandWritePrice;
-                    keyspaceCosts['totals'].ttlDeletes+= ttlDeleteCost;
-                    keyspaceCosts['totals'].total+= keyspaceTotal;
-                    
-                    datacenterCost += keyspaceTotal;
+                    keyspaceCosts['totals'].reads_provisioned += provisionReadCost;
+                    keyspaceCosts['totals'].writes_provisioned += provisionWriteCost;
+                    keyspaceCosts['totals'].reads_on_demand += ondemandReadPrice;
+                    keyspaceCosts['totals'].writes_on_demand += ondemandWritePrice;
+                    keyspaceCosts['totals'].ttlDeletes += ttlDeleteCost;
+                    keyspaceCosts['totals'].provisioned_total += provisioned_total;
+                    keyspaceCosts['totals'].on_demand_total += on_demand_total;
+
+                    total_datacenter_provisioned_cost += provisioned_total;
+                    total_datacenter_on_demand_cost += on_demand_total;
                 });
 
                 const totals = keyspaceCosts['totals'];
@@ -587,16 +597,23 @@ const ResultsTable = ({ results }) => {
                 pricingData[dc.name] = {
                     region,
                     keyspaceCosts,
-                    totalCost: datacenterCost
+                    total_datacenter_provisioned_cost: total_datacenter_provisioned_cost,
+                    total_datacenter_on_demand_cost: total_datacenter_on_demand_cost
                 };
                 
-                totalMonthlyCost += datacenterCost;
+                total_monthly_provisioned_cost += total_datacenter_provisioned_cost;
+                total_monthly_on_demand_cost += total_datacenter_on_demand_cost
             }
         });
 
+        console.log('Pricing data:', pricingData);
+        console.log('Total monthly provisioned cost:', total_monthly_provisioned_cost);
+        console.log('Total monthly on demand cost:', total_monthly_on_demand_cost);
+
         return {
-            datacenterCosts: pricingData,
-            totalMonthlyCost
+            total_datacenter_cost: pricingData,
+            total_monthly_provisioned_cost: total_monthly_provisioned_cost,
+            total_monthly_on_demand_cost: total_monthly_on_demand_cost
         };
     };
     
@@ -610,11 +627,11 @@ const ResultsTable = ({ results }) => {
                 <SpaceBetween size="l">
                     <Header variant="h2">Pricing Estimate</Header>
                     
-                    {Object.entries(pricing.datacenterCosts).map(([datacenter, data]) => (
+                    {Object.entries(pricing.total_datacenter_cost).map(([datacenter, data]) => (
                         <Container key={datacenter}>
                             <SpaceBetween size="m">
                                 <Header variant="h3">
-                                    {datacenter} ({data.region}) - {formatCurrency(data.totalCost)}/month
+                                    {datacenter} ({data.region}) - {formatCurrency(data.total_datacenter_provisioned_cost)}/month
                                 </Header>
                                 
                                 <Table
@@ -625,8 +642,10 @@ const ResultsTable = ({ results }) => {
                                         backup: formatCurrency(costs.backup),
                                         reads_provisioned: formatCurrency(costs.reads_provisioned),
                                         writes_provisioned: formatCurrency(costs.writes_provisioned),
+                                        reads_on_demand: formatCurrency(costs.reads_on_demand),
+                                        writes_on_demand: formatCurrency(costs.writes_on_demand),
                                         ttlDeletes: formatCurrency(costs.ttlDeletes),
-                                        total: formatCurrency(costs.total)
+                                        provisioned_total: formatCurrency(costs.provisioned_total)
                                     }))}eiifcbfhgnkrghifncntkujthgtjuvurebuhhnvkbicl
 
                                     columnDefinitions={[
@@ -647,7 +666,7 @@ const ResultsTable = ({ results }) => {
                                         },
                                         {
                                             id: 'reads_provisioned',
-                                            header: 'Provsioned Reads',
+                                            header: 'Provisioned Reads',
                                             cell: item => item.reads_provisioned
                                         },
                                         {
@@ -661,9 +680,9 @@ const ResultsTable = ({ results }) => {
                                             cell: item => item.ttlDeletes
                                         },
                                         {
-                                            id: 'total',
+                                            id: 'total_provisioned',
                                             header: 'Monthly Total',
-                                            cell: item => item.total
+                                            cell: item => item.provisioned_total
                                         }
                                     ]}
                                     sortingDisabled
@@ -674,7 +693,9 @@ const ResultsTable = ({ results }) => {
                     ))}
                     
                     <Alert type="info">
-                        <strong>Total Estimated Monthly Cost: {formatCurrency(pricing.totalMonthlyCost)}</strong>
+                        <strong>Total Estimated Monthly Cost (Provisioned): {formatCurrency(pricing.total_monthly_provisioned_cost)}</strong>
+                        <br />
+                        <strong>Total Estimated Monthly Cost (On-Demand): {formatCurrency(pricing.total_monthly_on_demand_cost)}</strong>
                         <br />
                         Note: This estimate uses Amazon Keyspaces pricing for the selected regions. Costs are calculated based on usage patterns from your Cassandra cluster data.
                     </Alert>
