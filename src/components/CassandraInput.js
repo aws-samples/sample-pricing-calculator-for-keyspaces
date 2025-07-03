@@ -11,9 +11,8 @@ import {
     Alert,
     Table
 } from '@cloudscape-design/components';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, buildCassandraLocalSet, getKeyspaceCassandraAggregate, SECONDS_PER_MONTH, HOURS_PER_MONTH } from './ParsingHelpers';
+import CreatePDFReport from './CreatePDFReport';
 import { awsRegions } from '../constants/regions';
 import pricingDataJson from '../data/mcs.json';
 
@@ -498,165 +497,9 @@ const ResultsTable = ({ results }) => {
             return;
         }
 
-        const doc = new jsPDF();
-        let yPosition = 20;
-        
-        // Title
-        doc.setFontSize(20);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Amazon Keyspaces Pricing Estimate Report', 20, yPosition);
-        yPosition += 20;
-        
-        // Date
-        doc.setFontSize(12);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 20, yPosition);
-        yPosition += 15;
-        
-        // Summary
         const pricing = calculatePricingEstimate();
-        if (pricing) {
-            doc.setFontSize(14);
-            doc.setFont('helvetica', 'bold');
-            doc.text('Cost Summary', 20, yPosition);
-            yPosition += 10;
-            
-            doc.setFontSize(12);
-            doc.setFont('helvetica', 'normal');
-            doc.text(`Total Monthly Cost (Provisioned): ${formatCurrency(pricing.total_monthly_provisioned_cost)}`, 20, yPosition);
-            yPosition += 8;
-            doc.text(`Total Monthly Cost (On-Demand): ${formatCurrency(pricing.total_monthly_on_demand_cost)}`, 20, yPosition);
-            yPosition += 15;
-        }
-        
-        // Results Tables for each datacenter
-        datacenters.forEach((datacenter, index) => {
-            const results = estimateResults[datacenter.name];
-            if (!results) return;
-            
-            // Check if we need a new page
-            if (yPosition > 250) {
-                doc.addPage();
-                yPosition = 20;
-            }
-            
-            // Datacenter header
-            doc.setFontSize(16);
-            doc.setFont('helvetica', 'bold');
-            doc.text(`${datacenter.name} (${regions[datacenter.name] || 'Unknown Region'}) - Sizing Details`, 20, yPosition);
-            yPosition += 15;
-            
-            // Prepare table data
-            const tableData = Object.entries(results).map(([keyspace, data]) => [
-                keyspace,
-                Math.round(data.writes_per_second).toString(),
-                Math.round(data.reads_per_second).toString(),
-                Math.round((data.avg_read_row_size_bytes + data.avg_write_row_size_bytes) / 2).toString(),
-                Math.round(data.total_live_space_gb).toString(),
-                Math.round(data.uncompressed_single_replica_gb).toString(),
-                Math.round(data.ttls_per_second).toString(),
-                data.replication_factor.toString()
-            ]);
-            
-            // Add table
-            doc.autoTable({
-                startY: yPosition,
-                head: [['Keyspace', 'Writes/sec', 'Reads/sec', 'Avg Row Size', 'Live Space (GB)', 'Uncompressed (GB)', 'TTLs/sec', 'Replication']],
-                body: tableData,
-                theme: 'grid',
-                headStyles: { fillColor: [66, 139, 202] },
-                styles: { fontSize: 8 },
-                columnStyles: {
-                    0: { cellWidth: 30 },
-                    1: { cellWidth: 20 },
-                    2: { cellWidth: 20 },
-                    3: { cellWidth: 25 },
-                    4: { cellWidth: 25 },
-                    5: { cellWidth: 25 },
-                    6: { cellWidth: 20 },
-                    7: { cellWidth: 20 }
-                }
-            });
-            
-            yPosition = doc.lastAutoTable.finalY + 15;
-        });
-        
-        // Pricing Tables for each datacenter
-        if (pricing) {
-            Object.entries(pricing.total_datacenter_cost).forEach(([datacenter, data]) => {
-                // Check if we need a new page
-                if (yPosition > 250) {
-                    doc.addPage();
-                    yPosition = 20;
-                }
-                
-                // Datacenter pricing header
-                doc.setFontSize(16);
-                doc.setFont('helvetica', 'bold');
-                doc.text(`${datacenter} (${data.region}) - Pricing Breakdown`, 20, yPosition);
-                yPosition += 15;
-                
-                // Prepare pricing table data
-                const pricingTableData = Object.entries(data.keyspaceCosts).map(([keyspace, costs]) => [
-                    costs.name,
-                    formatCurrency(costs.storage),
-                    formatCurrency(costs.backup),
-                    formatCurrency(costs.reads_provisioned),
-                    formatCurrency(costs.writes_provisioned),
-                    formatCurrency(costs.reads_on_demand),
-                    formatCurrency(costs.writes_on_demand),
-                    formatCurrency(costs.ttlDeletes),
-                    formatCurrency(costs.provisioned_total),
-                    formatCurrency(costs.on_demand_total)
-                ]);
-                
-                // Add pricing table
-                doc.autoTable({
-                    startY: yPosition,
-                    head: [['Keyspace', 'Storage', 'Backup', 'Prov Reads', 'Prov Writes', 'OnDem Reads', 'OnDem Writes', 'TTL Deletes', 'ProvisionedTotal', 'OnDemandTotal']],
-                    body: pricingTableData,
-                    theme: 'grid',
-                    headStyles: { fillColor: [66, 139, 202] },
-                    styles: { fontSize: 7 },
-                    columnStyles: {
-                        0: { cellWidth: 25 },
-                        1: { cellWidth: 20 },
-                        2: { cellWidth: 20 },
-                        3: { cellWidth: 20 },
-                        4: { cellWidth: 20 },
-                        5: { cellWidth: 20 },
-                        6: { cellWidth: 20 },
-                        7: { cellWidth: 20 },
-                        8: { cellWidth: 20 },
-                        9: { cellWidth: 20 }
-                    }
-                });
-                
-                yPosition = doc.lastAutoTable.finalY + 15;
-            });
-        }
-        
-        // Assumptions section
-        if (yPosition > 250) {
-            doc.addPage();
-            yPosition = 20;
-        }
-        
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Assumptions', 20, yPosition);
-        yPosition += 10;
-        
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.text('• Provisioned estimate includes 70% target utilization for auto-scaling', 20, yPosition);
-        yPosition += 8;
-        doc.text('• Costs are calculated based on usage patterns from your Cassandra cluster data', 20, yPosition);
-        yPosition += 8;
-        doc.text('• Pricing uses Amazon Keyspaces rates for the selected regions', 20, yPosition);
-        
-        // Save the PDF
-        doc.save('keyspaces-pricing-estimate.pdf');
+        const pdfReport = new CreatePDFReport();
+        pdfReport.createReport(datacenters, regions, estimateResults, pricing);
     };
 
     // Calculate pricing estimate

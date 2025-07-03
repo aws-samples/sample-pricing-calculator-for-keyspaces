@@ -25,7 +25,14 @@ function App() {
     const [multiSelectedRegions, setMultiSelectedRegions] = useState([]);
     const [expandedRegions, setExpandedRegions] = useState({});
     const [activeTab, setActiveTab] = useState('calculator');
-    const [activeInputMethod, setActiveInputMethod] = useState('standard');
+    const [activeInputMethod, setActiveInputMethod] = useState(() => {
+        // Check URL hash on initial load
+        const hash = window.location.hash.replace('#', '');
+        if (hash === 'cassandra') {
+            return 'advanced';
+        }
+        return 'standard';
+    });
     const [formData, setFormData] = useState({
         [selectedRegion]: {
             averageRowSizeInBytes: 1024,
@@ -198,6 +205,34 @@ function App() {
             [datacenterName]: result
         }));
     };
+
+    // Handle tab changes and update URL hash
+    const handleTabChange = ({ detail }) => {
+        const newTabId = detail.activeTabId;
+        setActiveInputMethod(newTabId);
+        
+        // Update URL hash based on tab
+        if (newTabId === 'advanced') {
+            window.location.hash = 'cassandra';
+        } else {
+            window.location.hash = '';
+        }
+    };
+
+    // Listen for hash changes (for direct URL navigation)
+    useEffect(() => {
+        const handleHashChange = () => {
+            const hash = window.location.hash.replace('#', '');
+            if (hash === 'cassandra') {
+                setActiveInputMethod('advanced');
+            } else {
+                setActiveInputMethod('standard');
+            }
+        };
+
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
 
     // Function to get datacenter-region mappings
     const getCassandraDatacenterRegionMap = () => {
@@ -427,7 +462,7 @@ function App() {
                     <SpaceBetween size="l">
                         <Tabs
                             activeTabId={activeInputMethod}
-                            onChange={({ detail }) => setActiveInputMethod(detail.activeTabId)}
+                            onChange={handleTabChange}
                             tabs={[
                                 {
                                     label: "Keyspaces Input",
