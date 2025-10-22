@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import intuitLogo from '../data/logo-intuit.png';
 
 // Function to format currency with commas and proper rounding
 const formatCurrency = (amount) => {
@@ -25,10 +26,14 @@ class CreatePDFReport {
         this.xPosition = 20;
 
         this.addTitle();
-        this.addDate();
+        //this.addDate();
+        this.addExecutiveSummary(datacenters, regions, estimateResults, pricing);
         this.addIntroduction();
+        this.customerQuote();
+        //this.doc.addPage();
         this.addCostSummary(pricing);
         this.addResultsTables(datacenters, regions, estimateResults);
+       
         this.addPricingTables(pricing);
         this.addAssumptions();
 
@@ -39,7 +44,9 @@ class CreatePDFReport {
     addTitle() {
         this.doc.setFontSize(20);
         this.doc.setFont('helvetica', 'bold');
-        this.doc.text('Amazon Keyspaces (for Apache Cassandra) pricing estimate report', this.xPosition, this.yPosition);
+        this.doc.text('Amazon Keyspaces (for Apache Cassandra)', this.xPosition, this.yPosition);
+        this.yPosition += 10;
+        this.doc.text('Pricing estimate report', this.xPosition, this.yPosition);
         this.yPosition += 20;
     }
 
@@ -50,38 +57,106 @@ class CreatePDFReport {
         this.yPosition += 15;
     }
 
+    addExecutiveSummary(datacenters, regions, estimateResults, pricing) {
+        if (!pricing) return;
+
+        // Calculate summary statistics
+        const totalKeyspaces = datacenters.reduce((total, dc) => {
+            const results = estimateResults[dc.name];
+            return total + (results ? Object.keys(results).length : 0);
+        }, 0);
+
+        const totalStorageGB = datacenters.reduce((total, dc) => {
+            const results = estimateResults[dc.name];
+            if (!results) return total;
+            return total + Object.values(results).reduce((dcTotal, data) => 
+                dcTotal + data.uncompressed_single_replica_gb, 0);
+        }, 0);
+
+        const totalWritesPerSecond = datacenters.reduce((total, dc) => {
+            const results = estimateResults[dc.name];
+            if (!results) return total;
+            return total + Object.values(results).reduce((dcTotal, data) => 
+                dcTotal + data.writes_per_second, 0);
+        }, 0);
+
+        const totalReadsPerSecond = datacenters.reduce((total, dc) => {
+            const results = estimateResults[dc.name];
+            if (!results) return total;
+            return total + Object.values(results).reduce((dcTotal, data) => 
+                dcTotal + data.reads_per_second, 0);
+        }, 0);
+
+        const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).
+
+Key Findings:
+• Total Datacenters: ${datacenters.length}
+• Total Keyspaces: ${totalKeyspaces}
+• Total Storage: ${Math.round(totalStorageGB)} GB
+• Total Write Operations: ${Math.round(totalWritesPerSecond)} per second
+• Total Read Operations: ${Math.round(totalReadsPerSecond)} per second
+
+Estimated Monthly Costs:
+• Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)}
+• On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)}
+• Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}
+• Annual On-Demand Cost: ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}
+
+This estimate is based on your current Cassandra cluster configuration and usage patterns. The provisioned pricing model offers predictable costs with 70% target utilization, while on-demand pricing provides flexibility for variable workloads.`;
+
+        this.addSection("Executive Summary", summaryContent, {
+            addPageAfter: true
+        });
+    }
+
     addIntroduction() {
         const content = 
-`Amazon Keyspaces (for Apache Cassandra) is a serverless, fully managed database service designed to run Cassandra workloads at scale on AWS. It provides CQL API compatibility, allowing applications built for Apache Cassandra to run without code changes. This simplifies modernization efforts while ensuring consistency with existing Cassandra tools and drivers.
+`Amazon Keyspaces (for Apache Cassandra) is a serverless, fully managed database service that enables you to run Cassandra workloads at scale on AWS without refactoring your applications.
 
-As a serverless service, Keyspaces automatically manages capacity and infrastructure. It offers granular controls and observability features, enabling customers to monitor and optimize cost, performance, and table-level isolation according to application requirements. This architecture improves operational agility by eliminating the need to manage nodes or clusters, and allows developers to deploy and operate independently without impacting other applications.
+Many customers face challenges operating and scaling self-managed Cassandra clusters — including the complexity of managing infrastructure, tuning performance, handling repairs and upgrades, and meeting demanding availability and compliance requirements.
 
-Keyspaces is built for elastic scalability. It automatically scales to meet workload demands—scaling up to provide higher availability and throughput during peak periods, and scaling down to reduce costs during lower utilization. The service also supports multi-Region replication with a 99.999% availability SLA, helping organizations achieve low recovery time objectives (RTO) for business continuity.
+These challenges can be addressed with a solution that provides serverless infrastructure, elastic scalability, built-in security, and automated operations — all without the need to manage nodes, clusters, or software maintenance tasks.
 
-Security is integrated by design. Keyspaces supports AWS Identity and Access Management (IAM) for fine-grained access control, encrypts data at rest and in transit by default, and provides point-in-time recovery (PITR) and continuous backups to support data protection and compliance needs.
+Amazon Keyspaces uniquely delivers these capabilities through its purpose-built, serverless architecture, seamless integration with AWS security and observability tools, and pay-as-you-go pricing model — differentiating it from self-managed Cassandra, managed services on virtual machines, and other NoSQL offerings.
 
-Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead, including cluster upgrades, compaction and repair management, JVM tuning, and configuration of common settings. This allows teams to focus on data modeling and application development, while Amazon handles the undifferentiated heavy lifting.`;
+With 99.999% availability SLA, the ability to double capacity in under 30 minutes, and consistent single-digit millisecond read/write performance, Keyspaces helps customers achieve operational excellence at scale. Leading organizations such as Monzo Bank, Intuit, GE Digital, and Adobe rely on Keyspaces to power critical, high-scale applications.`;
 
-        this.addSection("Introduction to Amazon Keyspaces", content, {
-            addPageAfter: true
+        this.addSection("Introduction", content, {
+            addPageAfter: false
+        });
+
+        this.yPosition += 10;
+    }
+
+    customerQuote(){
+        const content = `"In our prior state, if we had to scale out our cluster for more capacity, we would need a lead time of a few weeks. Now, using Amazon Keyspaces, we can accomplish this in 1 day."
+        
+        - Manoj Mohan, Software Engineer Leader, Intuit`;
+        
+        this.addSection("Intuit Zero downtime migration to Amazon Keyspaces", content, {
+            imageUrl: intuitLogo,
+            imageWidth: 66,
+            imageHeight: 25,
+            imageMargin: 15,
+            addPageAfter: false
         });
     }
 
     addCostSummary(pricing) {
         if (!pricing) return;
 
-        const cost_summary = 'The following section outlines the estimation process for Amazon Keyspaces. It begins by detailing the inputs used to generate the estimate, followed by the resulting Keyspaces cost estimate.'
+        const cost_summary = 'The following section outlines the estimation process for Amazon Keyspaces. It begins by detailing the inputs used to generate the estimate, followed by the output of the Keyspaces cost estimate.'
         this.addSection("Estimate summary", cost_summary, {
             addPageAfter: false
         });
         
         this.yPosition += 10;
-        this.doc.setFontSize(12);
-        this.doc.setFont('helvetica', 'normal');
-        this.doc.text(`Total monthly estimate (Provisioned): ${formatCurrency(pricing.total_monthly_provisioned_cost)}, Total yearly estimate (Provisioned):  ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}`, this.xPosition, this.yPosition);
-        this.yPosition += 8;
-        this.doc.text(`Total monthly estimate (On-Demand): ${formatCurrency(pricing.total_monthly_on_demand_cost)}, Total yearly estimate (On-Demand):  ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}`, this.xPosition, this.yPosition);
-        this.yPosition += 15;
+        //this.doc.setFontSize(12);
+        //this.doc.setFont('helvetica', 'normal');
+        //this.doc.text(`Total monthly estimate (Provisioned): ${formatCurrency(pricing.total_monthly_provisioned_cost)}, Total yearly estimate (Provisioned):  ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}`, this.xPosition, this.yPosition);
+        //this.yPosition += 8;
+        //this.doc.text(`Total monthly estimate (On-Demand): ${formatCurrency(pricing.total_monthly_on_demand_cost)}, Total yearly estimate (On-Demand):  ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}`, this.xPosition, this.yPosition);
+        //this.yPosition += 15;
     }
 
     addResultsTables(datacenters, regions, estimateResults) {
@@ -97,7 +172,7 @@ Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead,
             
 
             const dc_summary = 'The following table provides input gathered from the user interface about your existing workload.'
-            this.addSection(`${datacenter.name} (${regions[datacenter.name] || 'Unknown Region'}) - Cassandra sizing details`, dc_summary, {
+            this.addSection(`Input details - DC:${datacenter.name} to AWS Region:${regions[datacenter.name] || 'Unknown Region'} `, dc_summary, {
                 addPageAfter: false
             });
 
@@ -151,7 +226,7 @@ Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead,
             // Datacenter pricing header
             
             const dc_summary = 'The following table provides Keyspaces estimate based on the inputs provided.'
-            this.addSection(`${datacenter} (${data.region}) - Keyspaces estimation`, dc_summary, {
+            this.addSection(`Keyspaces estimate - DC:${datacenter} to AWS Region:${data.region}`, dc_summary, {
                 addPageAfter: false
             });
 
@@ -218,6 +293,139 @@ Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead,
     }
 
     /**
+     * Core method to render text content with common logic
+     * @param {string} content - The text content to add
+     * @param {Object} options - Configuration options
+     * @param {number} options.contentFontSize - Font size for content (default: 12)
+     * @param {number} options.lineHeight - Height between lines (default: 7)
+     * @param {number} options.maxWidth - Maximum width for text wrapping (default: 180)
+     * @param {number} options.pageBreakThreshold - Y position threshold for page break (default: 280)
+     * @param {string} options.fontStyle - Font style: 'normal', 'bold', 'italic' (default: 'normal')
+     * @param {number} options.startX - Starting X position (default: this.xPosition)
+     * @param {number} options.startY - Starting Y position (default: this.yPosition)
+     * @returns {number} The final Y position after rendering
+     */
+    _renderTextContent(content, options = {}) {
+        const {
+            contentFontSize = 12,
+            lineHeight = 7,
+            maxWidth = 180,
+            pageBreakThreshold = 280,
+            fontStyle = 'normal',
+            startX = this.xPosition,
+            startY = this.yPosition
+        } = options;
+
+        let currentY = startY;
+
+        // Set font for content
+        this.doc.setFontSize(contentFontSize);
+        this.doc.setFont('helvetica', fontStyle);
+
+        // Split content into lines that fit within maxWidth
+        const lines = this.doc.splitTextToSize(content, maxWidth);
+
+        // Write each line
+        lines.forEach(line => {
+            // Check for page break
+            if (currentY > pageBreakThreshold) {
+                this.doc.addPage();
+                currentY = 20;
+            }
+            
+            this.doc.text(line, startX, currentY);
+            currentY += lineHeight;
+        });
+
+        return currentY;
+    }
+
+    /**
+     * Core method to render a title
+     * @param {string} title - The title text
+     * @param {Object} options - Configuration options
+     * @param {number} options.titleFontSize - Font size for title (default: 16)
+     * @param {number} options.pageBreakThreshold - Y position threshold for page break (default: 280)
+     * @param {number} options.startX - Starting X position (default: this.xPosition)
+     * @param {number} options.startY - Starting Y position (default: this.yPosition)
+     * @param {number} options.maxWidth - Maximum width for title wrapping (default: 180)
+     * @param {number} options.lineHeight - Height between title lines (default: 8)
+     * @returns {number} The final Y position after rendering
+     */
+    _renderTitle(title, options = {}) {
+        const {
+            titleFontSize = 16,
+            pageBreakThreshold = 280,
+            startX = this.xPosition,
+            startY = this.yPosition,
+            maxWidth = 180,
+            lineHeight = 8
+        } = options;
+
+        let currentY = startY;
+
+        // Check if we need a new page
+        if (currentY > pageBreakThreshold - 50) {
+            this.doc.addPage();
+            currentY = 20;
+        }
+
+        this.doc.setFontSize(titleFontSize);
+        this.doc.setFont('helvetica', 'bold');
+        
+        // Split title into lines that fit within maxWidth
+        const lines = this.doc.splitTextToSize(title, maxWidth);
+        
+        // Write each line
+        lines.forEach(line => {
+            this.doc.text(line, startX, currentY);
+            currentY += lineHeight;
+        });
+
+        return currentY;
+    }
+
+    /**
+     * Core method to add an image
+     * @param {string} imageUrl - URL or base64 string of the image
+     * @param {Object} options - Configuration options
+     * @param {number} options.imageWidth - Width of the image in mm (default: 60)
+     * @param {number} options.imageHeight - Height of the image in mm (default: 40)
+     * @param {number} options.startX - Starting X position (default: this.xPosition)
+     * @param {number} options.startY - Starting Y position (default: this.yPosition)
+     * @returns {number} The final Y position after rendering
+     */
+    _renderImage(imageUrl, options = {}) {
+        const {
+            imageWidth = 60,
+            imageHeight = 40,
+            startX = this.xPosition,
+            startY = this.yPosition
+        } = options;
+
+        try {
+            // Determine image format from URL or use default
+            let imageFormat = 'JPEG';
+            if (imageUrl.toLowerCase().includes('.png')) {
+                imageFormat = 'PNG';
+            } else if (imageUrl.toLowerCase().includes('.gif')) {
+                imageFormat = 'GIF';
+            } else if (imageUrl.toLowerCase().includes('.webp')) {
+                imageFormat = 'WEBP';
+            }
+            
+            this.doc.addImage(imageUrl, imageFormat, startX, startY, imageWidth, imageHeight);
+        } catch (error) {
+            console.warn('Failed to add image:', error);
+            // If image fails, just add a placeholder rectangle
+            this.doc.rect(startX, startY, imageWidth, imageHeight);
+            this.doc.text('Image', startX + imageWidth/2 - 10, startY + imageHeight/2);
+        }
+
+        return startY + imageHeight;
+    }
+
+    /**
      * Generic function to add text content to the PDF document
      * @param {string} content - The text content to add
      * @param {Object} options - Configuration options
@@ -233,47 +441,29 @@ Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead,
     addTextContent(content, options = {}) {
         const {
             title,
-            titleFontSize = 16,
-            contentFontSize = 12,
-            lineHeight = 7,
-            maxWidth = 180,
-            pageBreakThreshold = 280,
             addPageAfter = false,
-            fontStyle = 'normal'
+            ...renderOptions
         } = options;
+
+        let currentY = this.yPosition;
 
         // Add title if provided
         if (title) {
-            // Check if we need a new page
-            if (this.yPosition > pageBreakThreshold - 50) {
-                this.doc.addPage();
-                this.yPosition = 20;
-            }
-
-            this.doc.setFontSize(titleFontSize);
-            this.doc.setFont('helvetica', 'bold');
-            this.doc.text(title, this.xPosition, this.yPosition);
-            this.yPosition += 10;
+            currentY = this._renderTitle(title, {
+                titleFontSize: renderOptions.titleFontSize || 16,
+                pageBreakThreshold: renderOptions.pageBreakThreshold || 280,
+                startY: currentY
+            });
         }
 
-        // Set font for content
-        this.doc.setFontSize(contentFontSize);
-        this.doc.setFont('helvetica', fontStyle);
-
-        // Split content into lines that fit within maxWidth
-        const lines = this.doc.splitTextToSize(content, maxWidth);
-
-        // Write each line
-        lines.forEach(line => {
-            // Check for page break
-            if (this.yPosition > pageBreakThreshold) {
-                this.doc.addPage();
-                this.yPosition = 20;
-            }
-            
-            this.doc.text(line, this.xPosition, this.yPosition);
-            this.yPosition += lineHeight;
+        // Render content
+        currentY = this._renderTextContent(content, {
+            ...renderOptions,
+            startY: currentY
         });
+
+        // Update global position
+        this.yPosition = currentY;
 
         // Add page after content if requested
         if (addPageAfter) {
@@ -283,24 +473,103 @@ Unlike self-managed Cassandra, Amazon Keyspaces eliminates operational overhead,
     }
 
     /**
-     * Add a section with title and content
+     * Add a section with title and content, optionally with an image
      * @param {string} title - Section title
      * @param {string} content - Section content
-     * @param {Object} options - Additional options for addTextContent
+     * @param {Object} options - Additional options
+     * @param {string} options.imageUrl - Optional URL or base64 string of the image
+     * @param {number} options.imageWidth - Width of the image in mm (default: 60)
+     * @param {number} options.imageHeight - Height of the image in mm (default: 40)
+     * @param {number} options.imageMargin - Margin between image and text in mm (default: 10)
+     * @param {boolean} options.addPageAfter - Whether to add a new page after content (default: false)
      */
     addSection(title, content, options = {}) {
-        this.addTextContent(content, {
-            title,
-            titleFontSize: 16,
-            contentFontSize: 12,
-            ...options
+        const {
+            imageUrl,
+            imageWidth = 60,
+            imageHeight = 40,
+            imageMargin = 10,
+            addPageAfter = false,
+            ...textOptions
+        } = options;
+
+        // If image is provided, create side-by-side layout
+        if (imageUrl) {
+            this.addSectionWithImage(content, imageUrl, {
+                imageWidth,
+                imageHeight,
+                imageMargin,
+                addPageAfter,
+                ...textOptions
+            });
+        } else {
+            // Use the simplified text-only method
+            this.addTextContent(content, {
+                title,
+                addPageAfter,
+                ...textOptions
+            });
+        }
+    }
+
+    /**
+     * Add a section with image and text side by side
+     * @param {string} content - Section content
+     * @param {string} imageUrl - URL or base64 string of the image
+     * @param {Object} options - Configuration options
+     */
+    addSectionWithImage(content, imageUrl, options = {}) {
+        const {
+            imageWidth = 60,
+            imageHeight = 40,
+            imageMargin = 10,
+            maxWidth = 180,
+            pageBreakThreshold = 280,
+            addPageAfter = false,
+            ...textOptions
+        } = options;
+
+        // Calculate layout dimensions
+        const textWidth = maxWidth - imageWidth - imageMargin;
+        const imageX = this.xPosition;
+        const textX = imageX + imageWidth + imageMargin;
+
+        // Check if we need a new page for the entire section
+        if (this.yPosition + Math.max(imageHeight, 50) > pageBreakThreshold) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        // Add the image
+        this._renderImage(imageUrl, {
+            imageWidth,
+            imageHeight,
+            startX: imageX,
+            startY: this.yPosition
         });
+
+        // Add the text content with adjusted width
+        const finalY = this._renderTextContent(content, {
+            ...textOptions,
+            maxWidth: textWidth,
+            startX: textX,
+            startY: this.yPosition
+        });
+
+        // Update y position to the bottom of the section
+        this.yPosition = Math.max(this.yPosition + imageHeight, finalY) + 10;
+
+        // Add page after content if requested
+        if (addPageAfter) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
     }
 
     /**
      * Add a simple paragraph without title
      * @param {string} content - Paragraph content
-     * @param {Object} options - Additional options for addTextContent
+     * @param {Object} options - Additional options
      */
     addParagraph(content, options = {}) {
         this.addTextContent(content, {

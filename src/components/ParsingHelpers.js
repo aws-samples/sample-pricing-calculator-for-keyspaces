@@ -86,6 +86,9 @@ export const getKeyspaceCassandraAggregate=(cassandra_set, datacenter) => {
         const number_of_nodes = keyspaceData.dcs[datacenter].number_of_nodes;
         const replication_factor = keyspaceData.dcs[datacenter].replication_factor;
         
+        console.log("number_of_nodes: " + number_of_nodes);
+        console.log("replication_factor: " + replication_factor);
+
         let keyspace_writes_total = 0;
         let keyspace_reads_total = 0;
         let total_live_space = 0;
@@ -173,6 +176,8 @@ export const buildCassandraLocalSet = (samples, statusData) => {
             const rowSizeData = nodeData.row_size_data;
             const uptimeSeconds = infoData.uptime_seconds;
 
+            console.log("rowSizeData: " + JSON.stringify(rowSizeData));
+            console.log("tablestatsData: " + JSON.stringify(tablestatsData));
             // Process each keyspace
             for (const [keyspaceName, keyspaceData] of Object.entries(tablestatsData)) {
                 // Skip if filtering for a single keyspace
@@ -181,6 +186,8 @@ export const buildCassandraLocalSet = (samples, statusData) => {
                         continue;
                     }
                 }
+                console.log("keyspaceName: " + keyspaceName);
+                
                 // Initialize keyspace structure if it doesn't exist
                 if (!result.data.keyspaces[keyspaceName]) {
                     result.data.keyspaces[keyspaceName] = {
@@ -206,7 +213,7 @@ export const buildCassandraLocalSet = (samples, statusData) => {
                 // Process each table in the keyspace
                 for (const [tableName, tableData] of Object.entries(keyspaceData)) {
 
-
+                    console.log("tableName: " + tableName);
                     // Initialize table structure if it doesn't exist
                     if (!result.data.keyspaces[keyspaceName].dcs[dcName].tables[tableName]) {
 
@@ -450,7 +457,8 @@ export const parseNodetoolInfo = (content) => {
     };
 };
 
-export const parse_cassandra_schema = (schemaContent) => {
+export const parse_cassandra_schema = (schemaContent, datacenter) => {
+   
     // Regular expressions for matching keyspace and table definitions
     const ksPattern = /CREATE KEYSPACE (\w+)\s+WITH replication = \{[^}]*'class': '(\w+)'(?:,\s*)?([^}]*)\}/gi;
     const tablePattern = /CREATE TABLE (\w+)\.(\w+)/gi;
@@ -489,6 +497,13 @@ export const parse_cassandra_schema = (schemaContent) => {
                     dcRepl[dc] = parseInt(rf, 10);
                 }
             }
+        }else if (ks.class === "SimpleStrategy") {
+
+            const replicationFactor = ks.rest.match(/'replication_factor':\s*'(\d+)'/).slice(1);
+            console.log("replicationFactor: " + replicationFactor + " datacenter: " + datacenter);
+
+            dcRepl[datacenter] = parseInt(replicationFactor, 10);
+            
         }
         ksInfo[ks.name] = {
             class: ks.class,
@@ -574,7 +589,7 @@ export const handleTablestatsFile = async (file) => {
     }
 };
 
-export const handleSchemaFile = async (file) => {
+export const handleSchemaFile = async (file, datacenter) =>{
     if (!file) {
         throw new Error('No file selected');
     }
@@ -585,7 +600,7 @@ export const handleSchemaFile = async (file) => {
             throw new Error('File is empty');
         }
 
-        const parsedData = parse_cassandra_schema(content);
+        const parsedData = parse_cassandra_schema(content, datacenter);
         if (!parsedData || Object.keys(parsedData).length === 0) {
             throw new Error('No valid schema definitions found in file');
         }

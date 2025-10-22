@@ -2,9 +2,9 @@
   "manifest": {
     "serviceId": "mcs",
     "accessType": "publish",
-    "esIndex": "plc-mcs-usd-20250702175243",
+    "esIndex": "plc-mcs-usd-20250909213057",
     "hawkFilePublicationDate": "2025-07-02T17:52:43Z",
-    "ETLIngestionTriggerDate": "2025-07-02T17:52:43Z",
+    "ETLIngestionTriggerDate": "2025-09-09T21:30:57Z",
     "currencyCode": "USD",
     "source": "mcs",
     "isMapped": "true"

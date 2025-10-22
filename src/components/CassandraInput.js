@@ -231,6 +231,7 @@ const ResultsTable = ({ results }) => {
 
     const handleDatacenterFileChange = async (datacenter, fileType, { detail }) => {
         const file = detail.value[0];
+        console.log("datacenter: " + datacenter + " fileType: " + fileType);
         
         // Validate tablestats file specifically
         if (fileType === 'tablestats' && file) {
@@ -265,7 +266,7 @@ const ResultsTable = ({ results }) => {
                     // Set validation success
                     const validation = {
                         success: true,
-                        message: `Successfully parsed ${totalTables} user definedtables from ${totalKeyspaces} keyspaces`
+                        message: `Successfully parsed ${totalTables} user defined tables from ${totalKeyspaces} keyspaces`
                     };
                     onFileChange(datacenter, fileType, file, parsedData, validation);
                 }
@@ -336,7 +337,7 @@ const ResultsTable = ({ results }) => {
         if (fileType === 'schema' && file) {
             try {
                 const content = await file.text();
-                const parsedData = parse_cassandra_schema(content);
+                const parsedData = parse_cassandra_schema(content, datacenter);
                 console.log('Parsed schema data:', parsedData);
                 
                 if (!parsedData || Object.keys(parsedData).length === 0) {
@@ -638,7 +639,7 @@ const ResultsTable = ({ results }) => {
         return (
             <Container>
                 <SpaceBetween size="l">
-                    <Header variant="h2">Pricing Estimate</Header>
+                    <Header variant="h2">KeyspacesPricing Estimate</Header>
                     
                     <Box textAlign="center">
                         <Button
