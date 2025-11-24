@@ -10,6 +10,7 @@ import sys
 import json
 import subprocess
 import argparse
+import boto3
 from decimal import Decimal
 from datetime import datetime, timedelta
 
@@ -146,32 +147,29 @@ def get_network_metrics(instance_id, region):
     
     return {"daily_gb_out": 0, "monthly_gb_out": 0}
 
-def get_ec2_price(instance_type):
-    """Get EC2 instance price using AWS Pricing API."""
+def get_ec2_price(instance_type, region_name, processor_type):
+    """Get EC2 instance price using AWS Pricing API via boto3."""
     print(f"Fetching price for {instance_type}...")
     
-    # Use a simplified approach - return known price for c5.4xlarge
-    if instance_type == "c5.4xlarge":
-        return 0.68
-    
-    cmd = [
-        "aws", "pricing", "get-products",
-        "--service-code", "AmazonEC2",
-        "--filters",
-        f"Type=TERM_MATCH,Field=instanceType,Value={instance_type}",
-        "Type=TERM_MATCH,Field=tenancy,Value=Shared",
-        "Type=TERM_MATCH,Field=operating-system,Value=Linux",
-        "Type=TERM_MATCH,Field=preInstalledSw,Value=NA",
-        "Type=TERM_MATCH,Field=capacitystatus,Value=Used",
-        "--region", "us-east-1"
-    ]
-    
+    # AWS Pricing API is only available in us-east-1 and ap-south-1
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        pricing_client = boto3.client('pricing', region_name='us-east-1')
         
-        for price_list in data.get('PriceList', []):
-            price_data = json.loads(price_list)
+        response = pricing_client.get_products(
+            ServiceCode='AmazonEC2',
+            Filters=[
+                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                 {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region_name},
+                  {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                  {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
+               
+            ]
+        )
+        
+        for price_list_item in response.get('PriceList', []):
+            price_data = json.loads(price_list_item)
+            print(price_data)
             terms = price_data.get('terms', {}).get('OnDemand', {})
             
             for term_key, term_data in terms.items():
@@ -252,6 +250,8 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     
     # Extract instance type
     instance_type = instance.get('InstanceType', '')
+    processor_type = instance.get('Architecture', '')
+
     print(f"Instance Type: {instance_type}")
     
     # Get attached volumes (assuming primary volume)
@@ -274,7 +274,7 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     network_data = get_network_metrics(instance_id, region)
     
     # Get pricing data
-    compute_price = get_ec2_price(instance_type)
+    compute_price = get_ec2_price(instance_type, region, processor_type)
     if not compute_price:
         print(f"Error: Could not retrieve price for instance type {instance_type}")
         return None
@@ -358,7 +358,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Complete EC2 TCO analysis - capture data and calculate costs')
     parser.add_argument('region', help='AWS region (e.g., us-east-1)')
-    parser.add_argument('instance_id', help='EC2 instance ID')
+    parser.add_argument('instance_id', type=str, help='EC2 instance ID')
     parser.add_argument('--snapshot-retention', type=int, default=7, help='Number of days to retain snapshots (default: 7)')
     parser.add_argument('--change-rate', type=float, default=5.0, help='Daily data change rate as percentage (default: 5)')
     parser.add_argument('--utilization', type=float, default=50.0, help='Percentage of volume that contains actual data (default: 50)')
