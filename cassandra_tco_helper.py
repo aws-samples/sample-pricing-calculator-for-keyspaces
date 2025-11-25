@@ -57,99 +57,117 @@ def map_volume_type_to_storage_type(volume_type):
     return mapping.get(volume_type)
 
 def get_instance_details(instance_id, region):
-    """Get EC2 instance details using AWS CLI."""
-    print(f"Fetching details for instance {instance_id} in {region}...")
-    
-    cmd = [
-        "aws", "ec2", "describe-instances",
-        "--instance-ids", instance_id,
-        "--region", region
-    ]
-    
+    """Get EC2 instance details using boto3."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        ec2_client = boto3.client('ec2', region_name=region)
         
-        if data['Reservations'] and data['Reservations'][0]['Instances']:
-            return data['Reservations'][0]['Instances'][0]
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        
+        if response['Reservations'] and response['Reservations'][0]['Instances']:
+            return response['Reservations'][0]['Instances'][0]
         else:
-            print(f"Error: Instance {instance_id} not found")
             return None
-    except subprocess.CalledProcessError as e:
-        print(f"Error fetching instance details: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON response: {e}")
+    except Exception as e:
         return None
 
 def get_volume_details(volume_id, region):
-    """Get EBS volume details using AWS CLI."""
-    print(f"Fetching details for volume {volume_id} in {region}...")
-    
-    cmd = [
-        "aws", "ec2", "describe-volumes",
-        "--volume-ids", volume_id,
-        "--region", region
-    ]
-    
+    """Get EBS volume details using boto3."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        ec2_client = boto3.client('ec2', region_name=region)
         
-        if data['Volumes']:
-            return data['Volumes'][0]
+        response = ec2_client.describe_volumes(VolumeIds=[volume_id])
+        
+        if response['Volumes']:
+            return response['Volumes'][0]
         else:
-            print(f"Error: Volume {volume_id} not found")
             return None
-    except subprocess.CalledProcessError as e:
-        print(f"Error fetching volume details: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON response: {e}")
+    except Exception as e:
         return None
 
 def get_network_metrics(instance_id, region):
-    """Get network metrics for the instance from CloudWatch."""
-    print(f"Fetching network metrics for {instance_id}...")
-    
+    """Get network metrics for the instance from CloudWatch using boto3."""
     # Get last 24 hours of data
     end_time = datetime.utcnow()
-    start_time = end_time - timedelta(days=1)
-    
-    network_in_cmd = [
-        "aws", "cloudwatch", "get-metric-statistics",
-        "--namespace", "AWS/EC2",
-        "--metric-name", "NetworkOut",
-        "--dimensions", f"Name=InstanceId,Value={instance_id}",
-        "--start-time", start_time.isoformat() + "Z",
-        "--end-time", end_time.isoformat() + "Z",
-        "--period", "3600",
-        "--statistics", "Sum",
-        "--region", region
-    ]
+    start_time = end_time - timedelta(days=14)
     
     try:
-        result = subprocess.run(network_in_cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        cloudwatch_client = boto3.client('cloudwatch', region_name=region)
+        
+        response = cloudwatch_client.get_metric_statistics(
+            Namespace='AWS/EC2',
+            MetricName='NetworkOut',
+            Dimensions=[
+                {'Name': 'InstanceId', 'Value': instance_id}
+            ],
+            StartTime=start_time,
+            EndTime=end_time,
+            Period=604800,
+            Statistics=['Sum']
+        )
         
         # Calculate daily average from hourly data
-        datapoints = data.get('Datapoints', [])
+        datapoints = response.get('Datapoints', [])
         if datapoints:
             total_bytes = sum(point.get('Sum', 0) for point in datapoints)
             daily_gb = total_bytes / (1024 * 1024 * 1024)  # Convert to GB
-            monthly_gb = daily_gb * 30  # Estimate monthly
+            monthly_gb = (daily_gb/14) * (365/12)  # Estimate monthly
             return {
                 "daily_gb_out": round(daily_gb, 4),
                 "monthly_gb_out": round(monthly_gb, 2)
             }
     except Exception as e:
-        print(f"Warning: Could not fetch network metrics: {e}")
+        pass
     
     return {"daily_gb_out": 0, "monthly_gb_out": 0}
 
-def get_ec2_price(instance_type, region_name, processor_type):
+def get_network_metrics_in(instance_id, region):
+    """Get network metrics for the instance from CloudWatch using boto3."""
+    # Get last 24 hours of data
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=14)
+    
+    try:
+        cloudwatch_client = boto3.client('cloudwatch', region_name=region)
+        
+        response = cloudwatch_client.get_metric_statistics(
+            Namespace='AWS/EC2',
+            MetricName='NetworkIn',
+            Dimensions=[
+                {'Name': 'InstanceId', 'Value': instance_id}
+            ],
+            StartTime=start_time,
+            EndTime=end_time,
+            Period=604800,
+            Statistics=['Sum']
+        )
+        
+        # Calculate daily average from hourly data
+        datapoints = response.get('Datapoints', [])
+        if datapoints:
+            total_bytes = sum(point.get('Sum', 0) for point in datapoints)
+            daily_gb = total_bytes / (1024 * 1024 * 1024)  # Convert to GB
+            monthly_gb = (daily_gb/14) * (365/12)  # Estimate monthly
+            return {
+                "daily_gb_in": round(daily_gb, 4),
+                "monthly_gb_in": round(monthly_gb, 2)
+            }
+    except Exception as e:
+        pass
+    
+    return {"daily_gb_in": 0, "monthly_gb_in": 0}
+
+def get_ec2_price(instance_type, region_name, processor_type, tenancy="default"):
     """Get EC2 instance price using AWS Pricing API via boto3."""
-    print(f"Fetching price for {instance_type}...")
+    tenancyDictionary = {
+        "dedicated": "Dedicated",
+        "default": "Shared",
+        "host": "Host"
+    }
+
+    if tenancy in tenancyDictionary:
+        tenancyFilter = tenancyDictionary[tenancy]
+    else:
+        tenancyFilter = "Shared"
     
     # AWS Pricing API is only available in us-east-1 and ap-south-1
     try:
@@ -161,15 +179,14 @@ def get_ec2_price(instance_type, region_name, processor_type):
                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                  {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
                  {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': region_name},
-                  {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-                  {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
+                   {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': tenancyFilter},
+                   {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'}
                
             ]
         )
         
         for price_list_item in response.get('PriceList', []):
             price_data = json.loads(price_list_item)
-            print(price_data)
             terms = price_data.get('terms', {}).get('OnDemand', {})
             
             for term_key, term_data in terms.items():
@@ -177,17 +194,16 @@ def get_ec2_price(instance_type, region_name, processor_type):
                 for dim_key, dim_data in price_dimensions.items():
                     price_per_unit = dim_data.get('pricePerUnit', {}).get('USD')
                     if price_per_unit:
-                        return float(price_per_unit)
+                        float_price_per_unit = float(price_per_unit)
+                        if float_price_per_unit > 0:
+                            return float_price_per_unit
         
         return None
     except Exception as e:
-        print(f"Error fetching EC2 price: {e}")
         return None
 
 def get_storage_price(storage_type):
     """Get EBS storage price using AWS Pricing API."""
-    print(f"Fetching price for {storage_type} storage...")
-    
     # Use known prices for common storage types
     storage_prices = {
         "ebs-gp3": 0.08,
@@ -229,16 +245,10 @@ def calculate_snapshot_costs(volume_size_gb, utilization_percent, change_rate_pe
         'yearly_cost': yearly_cost
     }
 
+
 def calculate_data_transfer_costs(monthly_gb_out):
     """Calculate data transfer costs based on AWS pricing tiers."""
-    if monthly_gb_out <= 100:  # First 100 GB free
-        return 0.0
-    elif monthly_gb_out <= 10240:  # 10 TB
-        return (monthly_gb_out - 100) * 0.09
-    elif monthly_gb_out <= 51200:  # 50 TB  
-        return (10140 * 0.09) + ((monthly_gb_out - 10240) * 0.085)
-    else:  # Over 50 TB
-        return (10140 * 0.09) + (40960 * 0.085) + ((monthly_gb_out - 51200) * 0.08)
+    return monthly_gb_out * 0.01
 
 def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, change_rate=5, utilization=50):
     """Capture instance data and calculate costs in one operation."""
@@ -251,8 +261,8 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     # Extract instance type
     instance_type = instance.get('InstanceType', '')
     processor_type = instance.get('Architecture', '')
-
-    print(f"Instance Type: {instance_type}")
+    placement = instance.get('Placement', {})
+    tenancy = placement.get('Tenancy', 'default') if placement else 'default'
     
     # Get attached volumes (assuming primary volume)
     storage_type = ''
@@ -272,11 +282,11 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     
     # Get network metrics
     network_data = get_network_metrics(instance_id, region)
+    network_data_in = get_network_metrics_in(instance_id, region)
     
     # Get pricing data
-    compute_price = get_ec2_price(instance_type, region, processor_type)
+    compute_price = get_ec2_price(instance_type, region, processor_type, tenancy)
     if not compute_price:
-        print(f"Error: Could not retrieve price for instance type {instance_type}")
         return None
     
     storage_type_key = map_volume_type_to_storage_type(storage_type)
@@ -286,18 +296,29 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     hourly = Decimal(str(compute_price))
     monthly_compute = hourly * 730
     monthly_storage = Decimal(str(storage_price)) * storage_size_gb
-    monthly_network = Decimal(str(calculate_data_transfer_costs(network_data["monthly_gb_out"])))
+    monthly_network_out = Decimal(str(calculate_data_transfer_costs(network_data["monthly_gb_out"])))
+    monthly_network_in = Decimal(str(calculate_data_transfer_costs(network_data_in["monthly_gb_in"])))
+    monthly_network = monthly_network_out + monthly_network_in
     
     # Calculate snapshot costs
     snapshot_costs = calculate_snapshot_costs(storage_size_gb, utilization, change_rate, snapshot_retention)
     
     # Create the output structure with costs
     result = {
-        "node": {
+        "single_node": {
             "instance": {"instance_types": instance_type, "monthly_cost": float(monthly_compute)},
             "storage": {"storage_type": storage_type, "size_gb": storage_size_gb, "monthly_cost": float(monthly_storage)},
             "backup": {"backup_type": "ebs_snapshot", "size_gb": storage_size_gb, "monthly_cost": float(snapshot_costs['monthly_cost'])},
-            "network": {"network_out_daily_gb": network_data["daily_gb_out"], "network_out_monthly_gb": network_data["monthly_gb_out"], "monthly_cost": float(monthly_network)}
+            "network_out": {
+                "network_out_daily_gb": network_data["daily_gb_out"], 
+                "network_out_monthly_gb": network_data["monthly_gb_out"],
+                "monthly_cost": float(monthly_network_out)
+            },
+            "network_in": {
+                "network_in_daily_gb": network_data_in["daily_gb_in"],
+                "network_in_monthly_gb": network_data_in["monthly_gb_in"],
+                "monthly_cost": float(monthly_network_in)
+            }
         },
         "operations": {
             "operator_hours": {"operators": 2, "avg_operator_hours_per_operator_per_week": 10, "hourly_operator_cost": 100, "monthly_cost": 8000}
@@ -311,7 +332,14 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
         'instance_type': instance_type,
         'compute': {'hourly': hourly, 'monthly': monthly_compute},
         'storage': {'type': storage_type, 'size_gb': storage_size_gb, 'price_per_gb': Decimal(str(storage_price)), 'monthly': monthly_storage},
-        'network': {'monthly_gb_out': network_data["monthly_gb_out"], 'monthly': monthly_network},
+        'network_out': {
+            'monthly_gb_out': network_data["monthly_gb_out"],
+            'monthly': monthly_network_out
+        },
+        'network_in': {
+            'monthly_gb_in': network_data_in["monthly_gb_in"],
+            'monthly': monthly_network_in
+        },
         'snapshots': snapshot_costs,
         'total': {'monthly': total_monthly}
     }
@@ -335,12 +363,16 @@ def display_cost_summary(costs, snapshot_params):
     print(f"Price per GB: ${costs['storage']['price_per_gb']:.4f}")
     print(f"Monthly: ${costs['storage']['monthly']:.2f}")
     
-    if costs['network']['monthly_gb_out'] > 0:
+    if costs.get('network_out', {}).get('monthly_gb_out', 0) > 0 or costs.get('network_in', {}).get('monthly_gb_in', 0) > 0:
         print(f"\nNETWORK TRANSFER COSTS:")
-        print(f"Monthly Data Out: {costs['network']['monthly_gb_out']:.2f} GB")
-        if costs['network']['monthly_gb_out'] <= 100:
-            print("Status: Within free tier (first 100 GB/month)")
-        print(f"Monthly: ${costs['network']['monthly']:.2f}")
+        if costs.get('network_out', {}).get('monthly_gb_out', 0) > 0:
+            print(f"Monthly Data Out: {costs['network_out']['monthly_gb_out']:.2f} GB")
+            print(f"Monthly Cost Out: ${costs['network_out']['monthly']:.2f}")
+        if costs.get('network_in', {}).get('monthly_gb_in', 0) > 0:
+            print(f"Monthly Data In: {costs['network_in']['monthly_gb_in']:.2f} GB")
+            print(f"Monthly Cost In: ${costs['network_in']['monthly']:.2f}")
+        total_network_cost = costs.get('network_out', {}).get('monthly', 0) + costs.get('network_in', {}).get('monthly', 0)
+        print(f"Total Monthly Network Cost: ${total_network_cost:.2f}")
     
     if costs['snapshots']:
         print(f"\nSNAPSHOT BACKUP COSTS:")
@@ -380,33 +412,11 @@ def main():
     if result:
         data, costs = result
         
-        # Print the JSON output
-        print("\n" + "="*50)
-        print("INSTANCE DATA WITH COSTS")
-        print("="*50)
+        # Output only JSON to stdout
         print(json.dumps(data, indent=2))
-        
-        # Save to file
-        filename = f"instance_details_{args.instance_id}.json"
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        print(f"\nData saved to {filename}")
-        
-        # Display cost summary
-        snapshot_params = {
-            'retention_days': args.snapshot_retention,
-            'change_rate': args.change_rate,
-            'utilization': args.utilization
-        }
-        
-        display_cost_summary(costs, snapshot_params)
-        
-        print("\nNOTE: These are estimated costs based on on-demand pricing.")
-        print("      Actual costs may vary based on usage patterns, reserved instances,")
-        print("      savings plans, and other factors.")
     else:
-        print("Failed to capture instance data and calculate costs")
+        error_data = {"error": "Failed to capture instance data and calculate costs"}
+        print(json.dumps(error_data, indent=2))
         sys.exit(1)
 
 if __name__ == "__main__":
