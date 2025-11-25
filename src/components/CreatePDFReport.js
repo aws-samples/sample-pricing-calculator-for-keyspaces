@@ -20,14 +20,15 @@ class CreatePDFReport {
         this.xPosition = 20;
     }
 
-    createReport(datacenters, regions, estimateResults, pricing) {
+    createReport(datacenters, regions, estimateResults, pricing, tcoData) {
+        console.log('tcoData', tcoData);
         this.doc = new jsPDF();
         this.yPosition = 20;
         this.xPosition = 20;
 
         this.addTitle();
         //this.addDate();
-        this.addExecutiveSummary(datacenters, regions, estimateResults, pricing);
+        this.addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData);
         this.addIntroduction();
         this.customerQuote();
         //this.doc.addPage();
@@ -35,7 +36,10 @@ class CreatePDFReport {
         this.addResultsTables(datacenters, regions, estimateResults);
        
         this.addPricingTables(pricing);
+       
         this.addAssumptions();
+
+        this.addCassandraTCOSection(datacenters, tcoData);
 
         // Save the PDF
         this.doc.save('keyspaces-pricing-estimate.pdf');
@@ -57,7 +61,7 @@ class CreatePDFReport {
         this.yPosition += 15;
     }
 
-    addExecutiveSummary(datacenters, regions, estimateResults, pricing) {
+    addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData) {
         if (!pricing) return;
 
         // Calculate summary statistics
@@ -87,24 +91,91 @@ class CreatePDFReport {
                 dcTotal + data.reads_per_second, 0);
         }, 0);
 
-        const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).
+        // Calculate total Cassandra TCO if available
+        let totalCassandraTCO = 0;
+        let instanceCost = 0;
+        let storageCost = 0;
+        let backupCost = 0;
+        let networkCost = 0;
+        let operationsCost = 0;
+        let perNodeCost = 0;
+        let totalNodeCost = 0;
+        if (tcoData) {
+            datacenters.forEach(dc => {
+                const tco = tcoData[dc.name];
+                if (!tco) return;
 
-Key Findings:
-• Total Datacenters: ${datacenters.length}
-• Total Keyspaces: ${totalKeyspaces}
-• Total Storage: ${Math.round(totalStorageGB)} GB
-• Total Write Operations: ${Math.round(totalWritesPerSecond)} per second
-• Total Read Operations: ${Math.round(totalReadsPerSecond)} per second
+                 instanceCost +=  (tco.single_node?.instance?.monthly_cost || 0) * dc.nodeCount;
+                 storageCost += (tco.single_node?.storage?.monthly_cost || 0) * dc.nodeCount;
+                 backupCost += (tco.single_node?.backup?.monthly_cost || 0) * dc.nodeCount;
+                 const networkOutCost = (tco.single_node?.network_out?.monthly_cost || 0);
+                 const networkInCost = (tco.single_node?.network_in?.monthly_cost || 0);
+                 networkCost += (networkOutCost + networkInCost) * dc.nodeCount;
 
-Estimated Monthly Costs:
-• Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)}
-• On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)}
-• Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}
-• Annual On-Demand Cost: ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}
+                 perNodeCost = instanceCost + storageCost + backupCost + networkCost;
+                 totalNodeCost += perNodeCost
+                 operationsCost += tco.operations?.operator_hours?.monthly_cost ||  0;
 
-This estimate is based on your current Cassandra cluster configuration and usage patterns. The provisioned pricing model offers predictable costs with 70% target utilization, while on-demand pricing provides flexibility for variable workloads.`;
+                
+            });
+        }
+        totalCassandraTCO = totalNodeCost + operationsCost;
 
-        this.addSection("Executive Summary", summaryContent, {
+
+        const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).`
+
+          this.addSection("Executive Summary", summaryContent, {
+            addPageAfter: false
+        });
+
+        this.yPosition += 5;
+
+        const keyDtails = 
+        `        • Total Datacenters: ${datacenters.length}
+        • Total Keyspaces: ${totalKeyspaces}
+        • Total Live Storage: ${Math.round(totalStorageGB)} GB
+        • Total Write Operations: ${Math.round(totalWritesPerSecond)} per second
+        • Total Read Operations: ${Math.round(totalReadsPerSecond)} per second`
+
+        this.addSubSection("Cassandra cluster:", keyDtails, {
+            addPageAfter: false
+        });
+
+        this.yPosition += 5;
+
+        
+        var infrastructureContent = 
+        `        • Instance Cost: ${formatCurrency(instanceCost || 0)}
+        • Storage Cost: ${formatCurrency(storageCost || 0)}
+        • Backup Cost: ${formatCurrency(backupCost || 0)}
+        • Network Cost: ${formatCurrency(networkCost || 0)}
+        • Operations Cost: ${formatCurrency(operationsCost || 0)}
+        -----------------------------------------------------------
+        • Total MonthlyCost: ${formatCurrency(totalCassandraTCO)}
+        • Total Annual Cost: ${formatCurrency(totalCassandraTCO * 12)}`;
+
+        if (totalCassandraTCO === 0) {
+            infrastructureContent = `TCO data was not provided. Check file and upload section to add the total cost of ownership details.` 
+        }
+
+        this.addSubSection("Self-managed Cassandra cost estimate:", infrastructureContent, {
+            addPageAfter: false
+        });
+
+        this.yPosition += 5;
+
+        const keyspacesPricingContent = 
+        `        • Monthly Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)}
+        • Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}
+        -----------------------------------------------------------
+        • Monthly On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)}
+        • Annual On-Demand Cost: ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}
+
+
+        This Keyspaces estimate is based on your current Cassandra cluster configuration and usage patterns. The provisioned pricing model offers predictable costs with 70% target utilization, while on-demand pricing provides flexibility for variable workloads.
+        `;
+
+        this.addSubSection("Keyspaces pricing estimate:", keyspacesPricingContent, {
             addPageAfter: true
         });
     }
@@ -271,6 +342,104 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         });
     }
 
+    addCassandraTCOSection(datacenters, tcoData) {
+        if (!tcoData || !datacenters || datacenters.length === 0) return;
+
+        // Check if we need a new page
+        if (this.yPosition > 200) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        const sectionTitle = 'Cassandra TCO (Total Cost of Ownership)';
+        const sectionDescription = 'The following table shows the current Cassandra infrastructure costs per datacenter. Costs are calculated per node and multiplied by the total number of nodes in each datacenter.';
+        
+        this.addSection(sectionTitle, sectionDescription, {
+            addPageAfter: false
+        });
+
+        // Prepare TCO table data
+        const tcoTableData = [];
+        let totalTCO = 0;
+
+        datacenters.forEach(dc => {
+            const tco = tcoData[dc.name];
+            if (!tco) return;
+
+            // Calculate per-node costs
+            const instanceCost =  tco.single_node?.instance?.monthly_cost || 0;
+            const storageCost = tco.single_node?.storage?.monthly_cost || 0;
+            const backupCost =  tco.single_node?.backup?.monthly_cost || 0;
+            const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
+            const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
+            const networkCost = networkOutCost + networkInCost;
+
+            // Total per-node cost
+            const perNodeCost = instanceCost + storageCost + backupCost + networkCost;
+
+            // Total node cost for datacenter (per node * number of nodes)
+            const totalNodeCost = perNodeCost * dc.nodeCount;
+
+            // Operations cost (already total, not per node)
+            const operationsCost = tco.operations?.operator_hours?.monthly_cost || 0;
+
+            // Total TCO for this datacenter
+            const datacenterTCO = totalNodeCost + operationsCost;
+            totalTCO += datacenterTCO;
+
+            tcoTableData.push([
+                dc.name,
+                dc.nodeCount.toString(),
+                formatCurrency(instanceCost),
+                formatCurrency(storageCost),
+                formatCurrency(backupCost),
+                formatCurrency(networkCost),
+                formatCurrency(perNodeCost),
+                formatCurrency(totalNodeCost),
+                formatCurrency(operationsCost),
+                formatCurrency(datacenterTCO)
+            ]);
+        });
+
+        if (tcoTableData.length === 0) return;
+
+        // Add TCO table
+        this.doc.autoTable({
+            startY: this.yPosition,
+            startX: this.xPosition - 10,
+            head: [['Datacenter', 'Nodes', 'Instance/Node', 'Storage/Node', 'Backup/Node', 'Network/Node', 'Per Node Total', 'Node Total (All Nodes)', 'Operations', 'Datacenter TCO']],
+            body: tcoTableData,
+            theme: 'grid',
+            headStyles: { fillColor: [66, 139, 202] },
+            styles: { fontSize: 7 },
+            columnStyles: {
+                0: { cellWidth: 25 },
+                1: { cellWidth: 15 },
+                2: { cellWidth: 18 },
+                3: { cellWidth: 18 },
+                4: { cellWidth: 18 },
+                5: { cellWidth: 18 },
+                6: { cellWidth: 18 },
+                7: { cellWidth: 20 },
+                8: { cellWidth: 18 },
+                9: { cellWidth: 20 }
+            }
+        });
+
+        this.yPosition = this.doc.lastAutoTable.finalY + 15;
+
+        // Add total TCO summary
+        if (this.yPosition > 250) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        this.doc.setFontSize(12);
+        this.doc.setFont('helvetica', 'bold');
+        this.doc.text(`Self managed Cassandra Total Ownership Cost (All Datacenters): ${formatCurrency(totalTCO)}/month`, this.xPosition, this.yPosition);
+        this.yPosition += 15;
+    }
+
     addAssumptions() {
         // Assumptions section
         if (this.yPosition > 250) {
@@ -290,6 +459,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.doc.text('• Costs are calculated based on usage patterns from your Cassandra cluster data', 20, this.yPosition);
         this.yPosition += 8;
         this.doc.text('• Pricing uses Amazon Keyspaces rates for the selected regions', 20, this.yPosition);
+        this.yPosition += 16;
     }
 
     /**
@@ -471,6 +641,39 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             this.yPosition = 20;
         }
     }
+    addSubsectionTextContent(content, options = {}) {
+        const {
+            title,
+            addPageAfter = false,
+            ...renderOptions
+        } = options;
+
+        let currentY = this.yPosition;
+
+        // Add title if provided
+        if (title) {
+            currentY = this._renderTitle(title, {
+                titleFontSize: renderOptions.titleFontSize || 12,
+                pageBreakThreshold: renderOptions.pageBreakThreshold || 280,
+                startY: currentY
+            });
+        }
+
+        // Render content
+        currentY = this._renderTextContent(content, {
+            ...renderOptions,
+            startY: currentY
+        });
+
+        // Update global position
+        this.yPosition = currentY;
+
+        // Add page after content if requested
+        if (addPageAfter) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+    }
 
     /**
      * Add a section with title and content, optionally with an image
@@ -505,6 +708,34 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         } else {
             // Use the simplified text-only method
             this.addTextContent(content, {
+                title,
+                addPageAfter,
+                ...textOptions
+            });
+        }
+    }
+    addSubSection(title, content, options = {}) {
+        const {
+            imageUrl,
+            imageWidth = 60,
+            imageHeight = 40,
+            imageMargin = 10,
+            addPageAfter = false,
+            ...textOptions
+        } = options;
+
+        // If image is provided, create side-by-side layout
+        if (imageUrl) {
+            this.addSectionWithImage(content, imageUrl, {
+                imageWidth,
+                imageHeight,
+                imageMargin,
+                addPageAfter,
+                ...textOptions
+            });
+        } else {
+            // Use the simplified text-only method
+            this.addSubsectionTextContent(content, {
                 title,
                 addPageAfter,
                 ...textOptions

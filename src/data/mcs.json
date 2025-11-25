@@ -2,9 +2,9 @@
   "manifest": {
     "serviceId": "mcs",
     "accessType": "publish",
-    "esIndex": "plc-mcs-usd-20250909213057",
-    "hawkFilePublicationDate": "2025-07-02T17:52:43Z",
-    "ETLIngestionTriggerDate": "2025-09-09T21:30:57Z",
+    "esIndex": "plc-mcs-usd-20251105011301",
+    "hawkFilePublicationDate": "2025-11-05T01:13:01Z",
+    "ETLIngestionTriggerDate": "2025-11-05T01:13:01Z",
     "currencyCode": "USD",
     "source": "mcs",
     "isMapped": "true"
@@ -1269,6 +1269,103 @@
       "Time to Live": {
         "rateCode": "B7SXWBXT5DHCE8TC.JRTCKXETXF.6YS6EN2CT7",
         "price": "0.0000003150",
+        "RegionlessRateCode": "doNNks3z9Rc5OZOtA-Zoke63he5hJspWigjyUs3l_EQ"
+      }
+    },
+    "Asia Pacific (Thailand)": {
+      "0kAmqliq80g--kQIdQMHL4huRK7t8g45ZiugZ4dU0As": {
+        "rateCode": "AB9H8CTZNUUXSKBJ.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0001332000",
+        "RegionlessRateCode": "0kAmqliq80g--kQIdQMHL4huRK7t8g45ZiugZ4dU0As"
+      },
+      "4YUJMFETquzG8T_E9zm52SlQht8tG3VmqOADLnR19eM": {
+        "rateCode": "XYY2GBHF2CJVSGS9.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.2565000000",
+        "RegionlessRateCode": "4YUJMFETquzG8T_E9zm52SlQht8tG3VmqOADLnR19eM"
+      },
+      "9HZCvsfIKq9lkuQb-r6bfgZWsWWKXouV8aQ7BNxmVlA": {
+        "rateCode": "3767R4Y7TB3DBHUB.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.1539000000",
+        "RegionlessRateCode": "9HZCvsfIKq9lkuQb-r6bfgZWsWWKXouV8aQ7BNxmVlA"
+      },
+      "OsZKikLw1E_H7HWmTfSqqCSETu0-ZuDKEksEVpv4yJc": {
+        "rateCode": "K29FN4ZFGUUPUS3T.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000001283",
+        "RegionlessRateCode": "OsZKikLw1E_H7HWmTfSqqCSETu0-ZuDKEksEVpv4yJc"
+      },
+      "SR76UhxiTX-LUb7eh6Zt2IRZMfFXBlSzCjY_yCJdWFI": {
+        "rateCode": "DRZD55AG85NGAR6J.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0006660000",
+        "RegionlessRateCode": "SR76UhxiTX-LUb7eh6Zt2IRZMfFXBlSzCjY_yCJdWFI"
+      },
+      "U05kobEnUrQuudwKl1ofdLkMAj4Duk8FVdxNVcApyvM": {
+        "rateCode": "4FEMSXV29DHS8QTH.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000006390",
+        "RegionlessRateCode": "U05kobEnUrQuudwKl1ofdLkMAj4Duk8FVdxNVcApyvM"
+      },
+      "VLHIxZf58P65zKm6vTa0WnRfXfZvMQOzZnYL8MVewbY": {
+        "rateCode": "CGD3KV3N8S5RS82X.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.2052000000",
+        "RegionlessRateCode": "VLHIxZf58P65zKm6vTa0WnRfXfZvMQOzZnYL8MVewbY"
+      },
+      "cr0hBHYvvo1L5btS5c4Y3n4UE7K86O3B4fz9opdCV4c": {
+        "rateCode": "6265B2EZBHG2C79T.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000002052",
+        "RegionlessRateCode": "cr0hBHYvvo1L5btS5c4Y3n4UE7K86O3B4fz9opdCV4c"
+      },
+      "doNNks3z9Rc5OZOtA-Zoke63he5hJspWigjyUs3l_EQ": {
+        "rateCode": "CF8X6DD4TX57MCZ5.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000002813",
+        "RegionlessRateCode": "doNNks3z9Rc5OZOtA-Zoke63he5hJspWigjyUs3l_EQ"
+      },
+      "Provisioned Read Units": {
+        "rateCode": "AB9H8CTZNUUXSKBJ.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0001332000",
+        "RegionlessRateCode": "0kAmqliq80g--kQIdQMHL4huRK7t8g45ZiugZ4dU0As"
+      },
+      "AmazonMCS - Indexed DataStore per GB-Mo": {
+        "rateCode": "XYY2GBHF2CJVSGS9.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.2565000000",
+        "RegionlessRateCode": "4YUJMFETquzG8T_E9zm52SlQht8tG3VmqOADLnR19eM"
+      },
+      "Backup Restore Size per GB": {
+        "rateCode": "3767R4Y7TB3DBHUB.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.1539000000",
+        "RegionlessRateCode": "9HZCvsfIKq9lkuQb-r6bfgZWsWWKXouV8aQ7BNxmVlA"
+      },
+      "MCS-ReadUnits": {
+        "rateCode": "K29FN4ZFGUUPUS3T.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000001283",
+        "RegionlessRateCode": "OsZKikLw1E_H7HWmTfSqqCSETu0-ZuDKEksEVpv4yJc"
+      },
+      "MCS-ReadUnits Over 30000000": {
+        "rateCode": "K29FN4ZFGUUPUS3T.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000001283",
+        "RegionlessRateCode": "OsZKikLw1E_H7HWmTfSqqCSETu0-ZuDKEksEVpv4yJc"
+      },
+      "Provisioned Write Units": {
+        "rateCode": "DRZD55AG85NGAR6J.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0006660000",
+        "RegionlessRateCode": "SR76UhxiTX-LUb7eh6Zt2IRZMfFXBlSzCjY_yCJdWFI"
+      },
+      "MCS-WriteUnits": {
+        "rateCode": "4FEMSXV29DHS8QTH.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000006390",
+        "RegionlessRateCode": "U05kobEnUrQuudwKl1ofdLkMAj4Duk8FVdxNVcApyvM"
+      },
+      "MCS-WriteUnits Over 30000000": {
+        "rateCode": "4FEMSXV29DHS8QTH.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000006390",
+        "RegionlessRateCode": "U05kobEnUrQuudwKl1ofdLkMAj4Duk8FVdxNVcApyvM"
+      },
+      "Point-In-Time-Restore PITR Backup Storage per GB-Mo": {
+        "rateCode": "CGD3KV3N8S5RS82X.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.2052000000",
+        "RegionlessRateCode": "VLHIxZf58P65zKm6vTa0WnRfXfZvMQOzZnYL8MVewbY"
+      },
+      "Time to Live": {
+        "rateCode": "CF8X6DD4TX57MCZ5.JRTCKXETXF.6YS6EN2CT7",
+        "price": "0.0000002813",
         "RegionlessRateCode": "doNNks3z9Rc5OZOtA-Zoke63he5hJspWigjyUs3l_EQ"
       }
     },

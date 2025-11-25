@@ -53,10 +53,12 @@ function App() {
     const [cassandraInfoData, setCassandraInfoData] = useState({});
     const [cassandraSchemaData, setCassandraSchemaData] = useState({});
     const [cassandraRowSizeData, setCassandraRowSizeData] = useState({});
+    const [cassandraTcoData, setCassandraTcoData] = useState({});
     const [cassandraTablestatsValidation, setCassandraTablestatsValidation] = useState({});
     const [cassandraInfoValidation, setCassandraInfoValidation] = useState({});
     const [cassandraSchemaValidation, setCassandraSchemaValidation] = useState({});
     const [cassandraRowSizeValidation, setCassandraRowSizeValidation] = useState({});
+    const [cassandraTcoValidation, setCassandraTcoValidation] = useState({});
     const [cassandraEstimateValidation, setCassandraEstimateValidation] = useState({});
     const [cassandraEstimateResults, setCassandraEstimateResults] = useState({});
 
@@ -72,10 +74,12 @@ function App() {
         const initialInfo = {};
         const initialSchema = {};
         const initialRowSize = {};
+        const initialTco = {};
         const initialTablestatsValidation = {};
         const initialInfoValidation = {};
         const initialSchemaValidation = {};
         const initialRowSizeValidation = {};
+        const initialTcoValidation = {};
         const initialEstimateValidation = {};
         const initialEstimateResults = {};
         
@@ -95,6 +99,7 @@ function App() {
             initialInfoValidation[dc.name] = null;
             initialSchemaValidation[dc.name] = null;
             initialRowSizeValidation[dc.name] = null;
+            initialTcoValidation[dc.name] = null;
             initialEstimateValidation[dc.name] = null;
             initialEstimateResults[dc.name] = null;
         });
@@ -105,10 +110,12 @@ function App() {
         setCassandraInfoData(initialInfo);
         setCassandraSchemaData(initialSchema);
         setCassandraRowSizeData(initialRowSize);
+        setCassandraTcoData(initialTco);
         setCassandraTablestatsValidation(initialTablestatsValidation);
         setCassandraInfoValidation(initialInfoValidation);
         setCassandraSchemaValidation(initialSchemaValidation);
         setCassandraRowSizeValidation(initialRowSizeValidation);
+        setCassandraTcoValidation(initialTcoValidation);
         setCassandraEstimateValidation(initialEstimateValidation);
         setCassandraEstimateResults(initialEstimateResults);
     };
@@ -157,6 +164,12 @@ function App() {
                         [datacenter]: parsedData
                     }));
                     break;
+                case 'tco':
+                        setCassandraTcoData(prev => ({
+                            ...prev,
+                            [datacenter]: parsedData
+                        }));
+                        break;
                 default:
                     break;
             }
@@ -189,6 +202,12 @@ function App() {
                         [datacenter]: validation
                     }));
                     break;
+                case 'tco':
+                        setCassandraTcoValidation(prev => ({
+                            ...prev,
+                            [datacenter]: validation
+                        }));
+                        break;
                 default:
                     break;
             }
@@ -519,10 +538,12 @@ function App() {
                                                 infoData={cassandraInfoData}
                                                 schemaData={cassandraSchemaData}
                                                 rowSizeData={cassandraRowSizeData}
+                                                tcoData={cassandraTcoData}
                                                 tablestatsValidation={cassandraTablestatsValidation}
                                                 infoValidation={cassandraInfoValidation}
                                                 schemaValidation={cassandraSchemaValidation}
                                                 rowSizeValidation={cassandraRowSizeValidation}
+                                                tcoValidation={cassandraTcoValidation}
                                                 estimateValidation={cassandraEstimateValidation}
                                                 estimateResults={cassandraEstimateResults}
                                                 onStatusFileChange={handleCassandraStatusFileChange}

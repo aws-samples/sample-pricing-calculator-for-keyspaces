@@ -11,10 +11,11 @@ import {
     Alert,
     Table
 } from '@cloudscape-design/components';
-import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, buildCassandraLocalSet, getKeyspaceCassandraAggregate, SECONDS_PER_MONTH, HOURS_PER_MONTH } from './ParsingHelpers';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, parseTCOInfo } from './ParsingHelpers';
+import { buildCassandraLocalSet, getKeyspaceCassandraAggregate } from '../utils/PricingFormulas';
 import CreatePDFReport from './CreatePDFReport';
 import { awsRegions } from '../constants/regions';
-import pricingDataJson from '../data/mcs.json';
+import { calculatePricingEstimate } from '../utils/PricingFormulas';
 
 // Function to get region for a datacenter - can be used throughout the application
 export const getDatacenterRegion = (datacenterName, regionsMap) => {
@@ -44,25 +45,7 @@ const formatCurrency = (amount) => {
     return `$${Math.ceil(amount).toLocaleString()}`;
 };
 
-// Function to get region pricing data
-const getRegionPricing = (regionName) => {
-    if (!pricingDataJson || !pricingDataJson.regions || !pricingDataJson.regions[regionName]) {
-        console.log('No pricing data available for region:', regionName);
-        return null;
-    }
-
-    const regionPricing = pricingDataJson.regions[regionName];
-    
-    return {
-        readRequestPrice: regionPricing['MCS-ReadUnits'].price,
-        writeRequestPrice: regionPricing['MCS-WriteUnits'].price,
-        writeRequestPricePerHour: regionPricing['Provisioned Write Units'].price,
-        readRequestPricePerHour: regionPricing['Provisioned Read Units'].price,
-        storagePricePerGB: regionPricing['AmazonMCS - Indexed DataStore per GB-Mo'].price,
-        pitrPricePerGB: regionPricing['Point-In-Time-Restore PITR Backup Storage per GB-Mo'].price,
-        ttlDeletesPrice: regionPricing['Time to Live'].price
-    };
-};
+// pricing formulas moved to ../utils/PricingFormulas
 
 
 
@@ -75,10 +58,12 @@ function CassandraInput({
     infoData,
     schemaData,
     rowSizeData,
+    tcoData,
     tablestatsValidation,
     infoValidation,
     schemaValidation,
     rowSizeValidation,
+    tcoValidation,
     estimateValidation,
     estimateResults,
     onStatusFileChange,
@@ -419,6 +404,31 @@ const ResultsTable = ({ results }) => {
                 onFileChange(datacenter, fileType, file, null, validation);
             }
         }
+
+        // Validate TCO info file specifically
+        if (fileType === 'tco' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parseTCOInfo(content);
+                console.log('Parsed TCO data:', parsedData);
+                
+                // Set validation success
+                const validation = {
+                    success: true,
+                    message: 'Successfully parsed TCO Info file'
+                };
+                onFileChange(datacenter, fileType, file, parsedData, validation);
+            } catch (error) {
+                console.error(`Error parsing TCO file for ${datacenter}:`, error);
+                
+                // Set validation error
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
+            }
+        }
     };
 
     const isDatacenterReady = (datacenterName) => {
@@ -441,15 +451,17 @@ const ResultsTable = ({ results }) => {
         console.log('Parsed info data:', infoData[datacenterName]);
         console.log('Parsed schema data:', schemaData[datacenterName]);
         console.log('Parsed row size data:', rowSizeData[datacenterName]);
+        console.log('Parsed tco size data:', tcoData[datacenterName]);
 
         try {
             const nodeid = infoData[datacenterName].id 
 
-            const samples = { [datacenterName]:  {[nodeid]:{
+            const samples = { [datacenterName]: { [nodeid]: {
                 tablestats_data: tablestatsData[datacenterName],
-                     schema: schemaData[datacenterName],
-                      info_data: infoData[datacenterName],
-                       row_size_data: rowSizeData[datacenterName]}}}
+                schema: schemaData[datacenterName],
+                info_data: infoData[datacenterName],
+                row_size_data: rowSizeData[datacenterName]
+            }}}
 
             //create a map of datacenters
            const statusData = new Map(datacenters.map(dc => [dc.name, dc.nodeCount]));
@@ -498,142 +510,16 @@ const ResultsTable = ({ results }) => {
             return;
         }
 
-        const pricing = calculatePricingEstimate();
+        const pricing = calculatePricingEstimate(datacenters, regions, estimateResults);
         const pdfReport = new CreatePDFReport();
-        pdfReport.createReport(datacenters, regions, estimateResults, pricing);
+        pdfReport.createReport(datacenters, regions, estimateResults, pricing, tcoData);
     };
 
-    // Calculate pricing estimate
-    const calculatePricingEstimate = () => {
-        if (!allDatacentersHaveResults()) return null;
-
-        const pricingData = {};
-        let total_monthly_provisioned_cost = 0;
-        let total_monthly_on_demand_cost = 0;
-
-        datacenters.forEach(dc => {
-            const region = regions[dc.name];
-            const results = estimateResults[dc.name];
-            
-            if (results && region) {
-                // Get pricing data for this region
-                const regionPricing = getRegionPricing(region);
-                
-                if (!regionPricing) {
-                    console.warn(`No pricing data available for region: ${region}`);
-                    return;
-                }
-
-                // Calculate costs for this datacenter
-                let total_datacenter_provisioned_cost = 0;
-                let total_datacenter_on_demand_cost = 0;
-                const keyspaceCosts = {};
-                keyspaceCosts['totals'] = {
-                    name: 'region total',
-                    storage: 0,
-                    backup: 0,
-                    reads_provisioned: 0,
-                    writes_provisioned: 0,
-                    reads_on_demand: 0,
-                    writes_on_demand: 0,
-                    ttlDeletes: 0,
-                    provisioned_total: 0,
-                    on_demand_total: 0
-                };
-
-                Object.entries(results).forEach(([keyspace, data]) => {
-
-                    console.log('Data:', data);
-
-                    const avg_write_row_size_bytes = data.avg_write_row_size_bytes;
-                    const avg_read_row_size_bytes = data.avg_read_row_size_bytes;
-                    
-                    const write_units_per_operation = Math.ceil(avg_write_row_size_bytes / 1024);
-                   
-                    const ttl_units_per_operation = Math.ceil(avg_write_row_size_bytes / 1024);
-
-                    const read_units_per_operation = Math.ceil(avg_read_row_size_bytes / 4096);
-                   
-                    // Calculate monthly costs using real AWS pricing
-                    const storageCost = data.uncompressed_single_replica_gb * regionPricing.storagePricePerGB;
-                    
-                    const backupCost = data.uncompressed_single_replica_gb * regionPricing.pitrPricePerGB;
-                    
-                    // Convert per-second rates to monthly (seconds in a month)
-                    const ondemandReadPrice = data.reads_per_second * read_units_per_operation * SECONDS_PER_MONTH * regionPricing.readRequestPrice
-                    
-                    const ondemandWritePrice = data.writes_per_second * write_units_per_operation * SECONDS_PER_MONTH * regionPricing.writeRequestPrice
-                    
-                    const monthlyTtlDeletes = data.ttls_per_second * ttl_units_per_operation * SECONDS_PER_MONTH;
-                    
-                    // Calculate read/write costs (pricing is per unit, not per million)
-                    const provisionReadCost = data.reads_per_second * read_units_per_operation * HOURS_PER_MONTH * regionPricing.readRequestPricePerHour/.70;
-                    
-                    const provisionWriteCost = data.writes_per_second * write_units_per_operation * HOURS_PER_MONTH * regionPricing.writeRequestPricePerHour/.70;
-                    
-                    // Calculate TTL delete costs
-                    const ttlDeleteCost = monthlyTtlDeletes * regionPricing.ttlDeletesPrice;
-
-                    const provisioned_total = storageCost + backupCost + provisionReadCost + provisionWriteCost + ttlDeleteCost;
-                    
-                    const on_demand_total = storageCost + backupCost + ondemandReadPrice + ondemandWritePrice + ttlDeleteCost;
-                    
-                    keyspaceCosts[keyspace] = {
-                        name: keyspace,
-                        storage: storageCost,
-                        backup: backupCost,
-                        reads_provisioned: provisionReadCost,
-                        writes_provisioned: provisionWriteCost,
-                        reads_on_demand: ondemandReadPrice,
-                        writes_on_demand: ondemandWritePrice,
-                        ttlDeletes: ttlDeleteCost,
-                        provisioned_total: provisioned_total,
-                        on_demand_total: on_demand_total
-                    };
-                    keyspaceCosts['totals'].storage+= storageCost;
-                    keyspaceCosts['totals'].backup+= backupCost;
-                    keyspaceCosts['totals'].reads_provisioned += provisionReadCost;
-                    keyspaceCosts['totals'].writes_provisioned += provisionWriteCost;
-                    keyspaceCosts['totals'].reads_on_demand += ondemandReadPrice;
-                    keyspaceCosts['totals'].writes_on_demand += ondemandWritePrice;
-                    keyspaceCosts['totals'].ttlDeletes += ttlDeleteCost;
-                    keyspaceCosts['totals'].provisioned_total += provisioned_total;
-                    keyspaceCosts['totals'].on_demand_total += on_demand_total;
-
-                    total_datacenter_provisioned_cost += provisioned_total;
-                    total_datacenter_on_demand_cost += on_demand_total;
-                });
-
-                const totals = keyspaceCosts['totals'];
-                delete keyspaceCosts['totals'];
-                keyspaceCosts['totals'] = totals;
-
-                pricingData[dc.name] = {
-                    region,
-                    keyspaceCosts,
-                    total_datacenter_provisioned_cost: total_datacenter_provisioned_cost,
-                    total_datacenter_on_demand_cost: total_datacenter_on_demand_cost
-                };
-                
-                total_monthly_provisioned_cost += total_datacenter_provisioned_cost;
-                total_monthly_on_demand_cost += total_datacenter_on_demand_cost
-            }
-        });
-
-        console.log('Pricing data:', pricingData);
-        console.log('Total monthly provisioned cost:', total_monthly_provisioned_cost);
-        console.log('Total monthly on demand cost:', total_monthly_on_demand_cost);
-
-        return {
-            total_datacenter_cost: pricingData,
-            total_monthly_provisioned_cost: total_monthly_provisioned_cost,
-            total_monthly_on_demand_cost: total_monthly_on_demand_cost
-        };
-    };
+    // Calculate pricing estimate now imported from ../utils/PricingFormulas
     
     // Pricing Estimate Component
     const PricingEstimate = () => {
-        const pricing = calculatePricingEstimate();
+        const pricing = calculatePricingEstimate(datacenters, regions, estimateResults);
         if (!pricing) return null;
 
         return (
@@ -671,7 +557,7 @@ const ResultsTable = ({ results }) => {
                                         ttlDeletes: formatCurrency(costs.ttlDeletes),
                                         provisioned_total: formatCurrency(costs.provisioned_total),
                                         on_demand_total: formatCurrency(costs.on_demand_total)
-                                    }))}eiifcbfhgnkrghifncntkujthgtjuvurebuhhnvkbicl
+                                    }))}
 
                                     columnDefinitions={[
                                         {
@@ -906,6 +792,27 @@ const ResultsTable = ({ results }) => {
                                                     header={rowSizeValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
                                                 >
                                                     {rowSizeValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
+                                        </FormField>
+
+                                        <FormField
+                                            label="TCO Info File"
+                                            description={<p>Upload the TCO (Total Cost of Ownership) Info JSON file containing node and operations cost data. The script can be found here <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/cassandra_tco_helper.py' target='_blank' rel='noopener noreferrer'>cassandra-tco-helper.py</a></p>}
+                                           
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'tco', detail)}
+                                                value={datacenterFiles[datacenter.name]?.tco ? [datacenterFiles[datacenter.name].tco] : []}
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Upload a JSON file containing TCO Info data"
+                                            />
+                                            {tcoValidation && tcoValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={tcoValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={tcoValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {tcoValidation[datacenter.name].message}
                                                 </Alert>
                                             )}
                                         </FormField>

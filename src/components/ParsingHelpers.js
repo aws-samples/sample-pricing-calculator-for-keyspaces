@@ -1,22 +1,14 @@
+import { system_keyspaces, REPLICATION_FACTOR, SECONDS_PER_MONTH, GIGABYTE } from '../utils/Constants';
 // Parsing functions for Cassandra data files
-export const GIGABYTE = 1000000000;
+// moved GIGABYTE to ../utils/Constants
 const GOSSIP_OUT_BYTES = 1638;
 const GOSSIP_IN_BYTES = 3072;
-export const REPLICATION_FACTOR = 3;
-export const SECONDS_PER_MONTH = (365/12) * (24 * 60 * 60);
 export const HOURS_PER_MONTH = (365/12) * 24;
 export const WRITE_UNIT_SIZE = 1024;  // 1KB
 export const READ_UNIT_SIZE = 4096;   // 4KB
 const ONE_MILLION = 1000000;
 
-export const system_keyspaces = new Set([
-    'OpsCenter', 'dse_insights_local', 'solr_admin',
-    'dse_system', 'HiveMetaStore', 'system_auth',
-    'dse_analytics', 'system_traces', 'dse_audit', 'system',
-    'dse_system_local', 'dsefs', 'system_distributed', 'system_schema',
-    'dse_perf', 'dse_insights', 'system_backups', 'dse_security',
-    'dse_leases', 'system_distributed_everywhere', 'reaper_db'
-]);
+// moved to ../utils/Constants
 
 export const parseNodetoolStatus = (content) => {
     const lines = content.split('\n');
@@ -55,238 +47,8 @@ export const parseNodetoolStatus = (content) => {
     return datacenters;
 };
 
-export const getKeyspaceCassandraAggregate=(cassandra_set, datacenter) => {
-
-    /*
-    'data': {
-            'keyspaces': {
-                'keyspace_name': {
-                    'type': 'system' or 'user'
-                    'total_live_space_gb': Decimal,
-                    'uncompressed_single_replica_gb': Decimal,
-                    'avg_row_size_bytes': Decimal,
-                    'writes_per_second': Decimal,
-                    'reads_per_second': Decimal,
-                    'ttls_per_second': Boolean,
-                    'sample_count': Decimal
-                }
-            }
-        }
-    }
-    */
-
-    const keyspace_aggregate = {};
-
-    for (const [keyspace, keyspaceData] of Object.entries(cassandra_set.data.keyspaces)) {
-
-        if(keyspaceData.type === 'system'){
-            continue;
-        }
-
-        const number_of_nodes = keyspaceData.dcs[datacenter].number_of_nodes;
-        const replication_factor = keyspaceData.dcs[datacenter].replication_factor;
-        
-        console.log("number_of_nodes: " + number_of_nodes);
-        console.log("replication_factor: " + replication_factor);
-
-        let keyspace_writes_total = 0;
-        let keyspace_reads_total = 0;
-        let total_live_space = 0;
-        let uncompressed_single_replica = 0;
-        let write_row_size_bytes = 0;
-        let read_row_size_bytes = 0;
-        let keyspace_ttls_total = 0;
-
-
-        for (const [table, tableData] of Object.entries(keyspaceData.dcs[datacenter].tables)) {
-            
-            keyspace_writes_total += tableData.writes_monthly/ tableData.sample_count;
-            total_live_space += tableData.total_compressed_bytes/ tableData.sample_count;
-            uncompressed_single_replica += tableData.total_uncompressed_bytes/ tableData.sample_count;
-            write_row_size_bytes += tableData.writes_monthly * tableData.avg_row_size_bytes / tableData.sample_count;
-            read_row_size_bytes += tableData.reads_monthly * tableData.avg_row_size_bytes / tableData.sample_count;
-            keyspace_reads_total += tableData.reads_monthly  / tableData.sample_count;
-            keyspace_ttls_total += (tableData.has_ttl ? tableData.writes_monthly/tableData.sample_count : 0);
-            
-        }
-
-        
-        const average_read_row_size_bytes = read_row_size_bytes / (keyspace_reads_total > 0 ? keyspace_reads_total : 1);
-        const average_write_row_size_bytes = write_row_size_bytes / (keyspace_writes_total > 0 ? keyspace_writes_total : 1);
-        keyspace_aggregate[keyspace] = {
-            keyspace_name: keyspace,
-            keyspace_type: keyspaceData.type,
-            replication_factor: replication_factor,
-            total_live_space_gb: total_live_space  * number_of_nodes / GIGABYTE,
-            uncompressed_single_replica_gb: uncompressed_single_replica * number_of_nodes / replication_factor / GIGABYTE,
-            avg_write_row_size_bytes: average_write_row_size_bytes,
-            avg_read_row_size_bytes: average_read_row_size_bytes,
-            writes_per_second: keyspace_writes_total / SECONDS_PER_MONTH * number_of_nodes/replication_factor,
-            reads_per_second: keyspace_reads_total/ SECONDS_PER_MONTH * number_of_nodes /((replication_factor - 1 > 0)? replication_factor -1: 1),
-            ttls_per_second: keyspace_ttls_total  / SECONDS_PER_MONTH * number_of_nodes/replication_factor,
-        }
-        
-    }
-    return keyspace_aggregate;
-}
-export const buildCassandraLocalSet = (samples, statusData) => {
-
-    /*
-    'data': {
-            'keyspaces': {
-                'keyspace_name': {
-                    'type': 'system' or 'user',
-                    'dcs': {
-                        'dc_name': {
-                            'number_of_nodes': Decimal,
-                            'replication_factor': Decimal,
-                            'tables': {
-                                'table_name': {
-                                    'total_compressed_bytes': Decimal,
-                                    'total_uncompressed_bytes': Decimal,
-                                    'avg_row_size_bytes': Decimal,
-                                    'writes_monthly': Decimal,
-                                    'reads_monthly': Decimal,
-                                    'has_ttl': Boolean,
-                                    'sample_count': Decimal,
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    */
-    const result = {
-        data: {
-            keyspaces: {}
-        }
-    };
-
-    // Process each datacenter's samples
-    for (const [dcName, dcData] of Object.entries(samples)) {
-
-        // Get the number of nodes for the datacenter
-        const numberOfNodes = statusData.get(dcName);
-
-        for (const [nodeId, nodeData] of Object.entries(dcData)) {
-            const tablestatsData = nodeData.tablestats_data;
-            const schema = nodeData.schema;
-            const infoData = nodeData.info_data;
-            const rowSizeData = nodeData.row_size_data;
-            const uptimeSeconds = infoData.uptime_seconds;
-
-            console.log("rowSizeData: " + JSON.stringify(rowSizeData));
-            console.log("tablestatsData: " + JSON.stringify(tablestatsData));
-            // Process each keyspace
-            for (const [keyspaceName, keyspaceData] of Object.entries(tablestatsData)) {
-                // Skip if filtering for a single keyspace
-                if (schema && schema[keyspaceName]) {
-                    if(!schema[keyspaceName].datacenters[dcName]){
-                        continue;
-                    }
-                }
-                console.log("keyspaceName: " + keyspaceName);
-                
-                // Initialize keyspace structure if it doesn't exist
-                if (!result.data.keyspaces[keyspaceName]) {
-                    result.data.keyspaces[keyspaceName] = {
-                        type: system_keyspaces.has(keyspaceName) ? 'system' : 'user',
-                        dcs: {}
-                    };
-                }
-
-                let replicationFactor = REPLICATION_FACTOR;
-                if (schema && schema[keyspaceName]) {
-                    replicationFactor = schema[keyspaceName].datacenters[dcName];
-                }
-
-                // Initialize datacenter structure if it doesn't exist
-                if (!result.data.keyspaces[keyspaceName].dcs[dcName]) {
-                    result.data.keyspaces[keyspaceName].dcs[dcName] = {
-                        number_of_nodes: numberOfNodes,
-                        replication_factor: replicationFactor,
-                        tables: {}
-                    };
-                }
-
-                // Process each table in the keyspace
-                for (const [tableName, tableData] of Object.entries(keyspaceData)) {
-
-                    console.log("tableName: " + tableName);
-                    // Initialize table structure if it doesn't exist
-                    if (!result.data.keyspaces[keyspaceName].dcs[dcName].tables[tableName]) {
-
-                         // Get row size and TTL info
-                        const fullyQualifiedTableName = `${keyspaceName}.${tableName}`;
-                        let hasTtl = false;
-                        let averageBytes = 1;
-                        
-                        if (rowSizeData[fullyQualifiedTableName]) {
-                            const avgNumber = rowSizeData[fullyQualifiedTableName].average || '1';
-                            
-                            const parsedBytes = parseInt(avgNumber);
-                            
-                            // Check for NaN and set to default value if invalid
-                            if (isNaN(parsedBytes) || parsedBytes <= 0) {
-                                console.log(`Invalid average bytes value for ${fullyQualifiedTableName}: "${avgNumber}", using default value 1`);
-                                averageBytes = 1;
-                            } else {
-                                averageBytes = parsedBytes;
-                            }
-                            
-                            const ttlStr = rowSizeData[fullyQualifiedTableName]['default-ttl'] || 'y';
-                            hasTtl = ttlStr.trim() === 'n';
-                        }
-                        console.log("keyspace: " + keyspaceName + " table: " + tableName + " averageBytes: " + averageBytes);
-                        
-                        result.data.keyspaces[keyspaceName].dcs[dcName].tables[tableName] = {
-                            table_name: tableName,
-                            total_compressed_bytes: 0,
-                            total_uncompressed_bytes: 0,
-                            avg_row_size_bytes: averageBytes,
-                            writes_monthly: 0,
-                            reads_monthly: 0,
-                            has_ttl: hasTtl,
-                            sample_count: 0
-                        };
-                    }
-
-                    // Get table data
-                    let spaceUsed = tableData.space_used || 0; // compressed bytes
-                    // Check for NaN and set to 0 if invalid
-                    if (isNaN(spaceUsed) || spaceUsed === null || spaceUsed === undefined) {
-                        console.log("spaceUsed is NaN");
-                        spaceUsed = 0;
-                    }
-                    const ratio = spaceUsed > 0 ? tableData.compression_ratio : 1;
-                    let readCount = tableData.read_count || 0;
-                    let writeCount = tableData.write_count || 0;
-                    
-                    // Check for NaN and set to 0 if invalid
-                    if (isNaN(readCount) || readCount === null || readCount === undefined) {
-                        console.log("readCount is NaN");
-                        readCount = 0;
-                    }
-                    if (isNaN(writeCount) || writeCount === null || writeCount === undefined) {
-                        console.log("writeCount is NaN");
-                        writeCount = 0;
-                    }
-
-                    // Update table data
-                    const table = result.data.keyspaces[keyspaceName].dcs[dcName].tables[tableName];
-                    table.total_compressed_bytes += spaceUsed;
-                    table.total_uncompressed_bytes += spaceUsed / ratio;
-                    table.writes_monthly += (writeCount / uptimeSeconds) * SECONDS_PER_MONTH;
-                    table.reads_monthly += (readCount / uptimeSeconds) * SECONDS_PER_MONTH;
-                    table.sample_count += 1;
-                }
-            }
-        }
-    }
-    console.log(result);
-    return result;
-};
+// moved getKeyspaceCassandraAggregate to src/utils/Transformers.js
+// moved buildCassandraLocalSet to src/utils/Transformers.js
 
 export const parse_nodetool_tablestats = (content) => {
     const lines = content.split('\n');
@@ -656,4 +418,38 @@ export const handleRowSizeFile = async (file) => {
         console.error('Error parsing row size file:', error);
         throw new Error(`Failed to parse row size file: ${error.message}`);
     }
+};
+
+/**
+ * Parse TCO (Total Cost of Ownership) Info JSON file.
+ * 
+ * @param {string} data - JSON string content
+ * @returns {Object} Parsed JSON object with validated structure
+ * @throws {Error} If JSON is invalid or required fields are missing
+ */
+export const parseTCOInfo = (data) => {
+    let obj;
+
+    try {
+        obj = JSON.parse(data);
+        console.log("✅ JSON parsed successfully");
+    } catch (err) {
+        console.error("❌ Invalid JSON:", err.message);
+        throw new Error(`Invalid JSON: ${err.message}`);
+    }
+
+    // Basic sanity checks
+    if (!obj.single_node || !obj.operations) {
+        throw new Error("Invalid structure: expected 'single_node' and 'operations' fields");
+    }
+
+    if (!obj.single_node.instance || typeof obj.single_node.instance.monthly_cost !== 'number') {
+        throw new Error("Invalid or missing 'instance.monthly_cost'");
+    }
+
+    if (!obj.operations.operator_hours || typeof obj.operations.operator_hours.monthly_cost !== 'number') {
+        throw new Error("Invalid or missing 'operations.operator_hours.monthly_cost'");
+    }
+
+    return obj;
 };
