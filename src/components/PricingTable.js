@@ -22,6 +22,21 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
     );
   };
+  const calculateSavingsTotal = (pricing, consistency) => {
+    if (!pricing || Object.keys(pricing).length === 0) {
+      return 0;
+    }
+    
+    const isStrong = consistency === 'strong';
+    return (
+      (isStrong ? pricing.strongConsistencyReadsSavings : pricing.eventualConsistencyReadsSavings) +
+      (isStrong ? pricing.strongConsistencyWritesSavings : pricing.eventualConsistencyWritesSavings) +
+      (isStrong ? pricing.strongConsistencyStorage : pricing.eventualConsistencyStorage) +
+      (formData[selectedRegion]?.pointInTimeRecoveryForBackups ? 
+        (isStrong ? pricing.strongConsistencyBackup : pricing.eventualConsistencyBackup) : 0) +
+      (isStrong ? pricing.strongConsistencyTtlDeletesPrice : pricing.eventualConsistencyTtlDeletesPrice)
+    );
+  };
 
   const baseColumns = [
     { 
@@ -114,6 +129,12 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandStrong: calculateTotal(onDemandPricing || {}, 'strong'),
       onDemandEventual: calculateTotal(onDemandPricing || {}, 'eventual')
     },
+     { metric: "Monthly total (Database Svaings Plan)", 
+      provisionedStrong: calculateSavingsTotal(provisionedPricing || {}, 'strong'),
+      provisionedEventual: calculateSavingsTotal(provisionedPricing || {}, 'eventual'),
+      onDemandStrong: calculateSavingsTotal(onDemandPricing || {}, 'strong'),
+      onDemandEventual: calculateSavingsTotal(onDemandPricing || {}, 'eventual')
+     }
   ].filter(Boolean);
 
   const exportToPDF = () => {

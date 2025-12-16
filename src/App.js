@@ -5,6 +5,7 @@ import MultiRegionForm from './components/MultiRegionForm';
 import KeyspacesHelpPanel from './components/KeyspacesHelpPanel';
 import CassandraInput from './components/CassandraInput';
 import pricingDataJson from './data/mcs.json';  // Import the JSON directly
+import  saveingsPlansMap  from './components/PricingData';
 import './App.css';
 
 import {
@@ -16,6 +17,7 @@ import {
     Header
 } from '@cloudscape-design/components';
 import '@cloudscape-design/global-styles/index.css';
+import { savingsPlansData } from './components/PricingData';
 
 function App() {
     const [currentPricing, setCurrentPricing] = useState({});
@@ -384,6 +386,10 @@ function App() {
         let totalEventualConsistencyReads = 0;
         let totalStrongConsistencyWrites = 0;
         let totalEventualConsistencyWrites = 0;
+        let totalStrongConsistencyReadsSavings = 0;
+        let totalStrongConsistencyWritesSavings = 0;
+        let totalEventualConsistencyReadsSavings = 0;
+        let totalEventualConsistencyWritesSavings = 0;
         let totalStoragePrice = 0;
         let totalBackupPrice = 0;
         let totalTtlDeletesPrice = 0;
@@ -393,6 +399,11 @@ function App() {
         let totalOnDemandEventualConsistencyReads = 0;
         let totalOnDemandEventualConsistencyWrites = 0;
     
+        let totalOnDemandStrongConsistencyReadsSavings = 0;
+        let totalOnDemandStrongConsistencyWritesSavings = 0;
+        let totalOnDemandEventualConsistencyReadsSavings = 0;
+        let totalOnDemandEventualConsistencyWritesSavings = 0;
+
         const regions = [selectedRegion, ...multiSelectedRegions.map(r => r.value)];
         
         regions.forEach(region => {
@@ -409,27 +420,39 @@ function App() {
                 }  
             }
             regionPricing = processRegion(region);
+            const savingsPlanData = saveingsPlansMap[region];
+
+            console.log(savingsPlanData);
 
             if (regionPricing) {
 
                 const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);
                 const strongConsistencyReads = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, regionPricing.readRequestPricePerHour);
+                const strongConsistencyReadsSavings = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, savingsPlanData['ReadCapacityUnitHrs']['rate']);
     
                 const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
                 const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour);
-    
+                const strongConsistencyWritesSavings = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, savingsPlanData['WriteCapacityUnitHrs']['rate']);
+
                 const storagePrice = regionData.storageSizeInGb * regionPricing.storagePricePerGB;
                 const backupPrice = regionData.storageSizeInGb * regionPricing.pitrPricePerGB;
     
                 const onDemandReadsPrice = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * regionPricing.readRequestPrice;
                 const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice;
-    
+                const onDemandStrongConsistencyReadsSavings = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * savingsPlanData['ReadRequestUnits']['rate'];
+                const onDemandStrongConsistencyWritesSavings = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * savingsPlanData['WriteRequestUnits']['rate'];
+
                 const ttlDeletesPrice = getTtlDeletesPrice(regionData.averageTtlDeletesPerSecond, regionData.averageRowSizeInBytes) * regionPricing.ttlDeletesPrice;
     
                 totalStrongConsistencyReads += strongConsistencyReads;
                 totalEventualConsistencyReads += strongConsistencyReads / 2;
                 totalStrongConsistencyWrites += strongConsistencyWrites;
                 totalEventualConsistencyWrites += strongConsistencyWrites;
+
+                totalStrongConsistencyReadsSavings += strongConsistencyReadsSavings;
+                totalStrongConsistencyWritesSavings += strongConsistencyWritesSavings;
+                totalEventualConsistencyReadsSavings += strongConsistencyReadsSavings/2;
+                totalEventualConsistencyWritesSavings += strongConsistencyWritesSavings;
 
                 totalStoragePrice += storagePrice;
                 
@@ -440,6 +463,11 @@ function App() {
                 totalOnDemandEventualConsistencyReads += onDemandReadsPrice / 2;
                 totalOnDemandWrites += onDemandWritesPrice;
                 totalOnDemandEventualConsistencyWrites += onDemandWritesPrice;
+                
+                totalOnDemandStrongConsistencyReadsSavings += onDemandStrongConsistencyReadsSavings;
+                totalOnDemandStrongConsistencyWritesSavings += onDemandStrongConsistencyWritesSavings;
+                totalOnDemandEventualConsistencyReadsSavings += onDemandStrongConsistencyReadsSavings/2;
+                totalOnDemandEventualConsistencyWritesSavings += onDemandStrongConsistencyWritesSavings;
             }
         });
     
@@ -450,6 +478,10 @@ function App() {
             strongConsistencyWrites: totalStrongConsistencyWrites ,
             eventualConsistencyReads: totalEventualConsistencyReads,
             eventualConsistencyWrites: totalEventualConsistencyWrites ,
+            strongConsistencyReadsSavings: totalStrongConsistencyReadsSavings,
+            strongConsistencyWritesSavings: totalStrongConsistencyWritesSavings,
+            eventualConsistencyReadsSavings: totalEventualConsistencyReadsSavings,
+            eventualConsistencyWritesSavings: totalEventualConsistencyWritesSavings,
             strongConsistencyStorage: totalStoragePrice,
             strongConsistencyBackup: totalBackupPrice,
             eventualConsistencyStorage: totalStoragePrice,
@@ -463,6 +495,10 @@ function App() {
             strongConsistencyWrites: totalOnDemandEventualConsistencyWrites ,
             eventualConsistencyReads: totalOnDemandEventualConsistencyReads ,
             eventualConsistencyWrites: totalOnDemandWrites ,
+            strongConsistencyReadsSavings: totalOnDemandStrongConsistencyReadsSavings,
+            strongConsistencyWritesSavings: totalOnDemandStrongConsistencyWritesSavings,
+            eventualConsistencyReadsSavings: totalOnDemandEventualConsistencyReadsSavings,
+            eventualConsistencyWritesSavings: totalOnDemandEventualConsistencyWritesSavings,
             strongConsistencyStorage: totalStoragePrice,
             strongConsistencyBackup: totalBackupPrice,
             eventualConsistencyStorage: totalStoragePrice,

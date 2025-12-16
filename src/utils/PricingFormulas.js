@@ -1,6 +1,7 @@
 import pricingDataJson from '../data/mcs.json';
 import { system_keyspaces, REPLICATION_FACTOR, SECONDS_PER_MONTH, GIGABYTE } from './Constants';
 import { HOURS_PER_MONTH } from '../components/ParsingHelpers';
+import savingsPlansMap from '../components/PricingData';
 
 /**
  * Build a normalized Cassandra dataset from raw samples and status data.
@@ -269,6 +270,8 @@ export const calculatePricingEstimate = (datacenters, regions, estimateResults) 
     const pricingData = {};
     let total_monthly_provisioned_cost = 0;
     let total_monthly_on_demand_cost = 0;
+    let total_monthly_provisioned_cost_savings = 0;
+    let total_monthly_on_demand_cost_savings = 0;
 
     datacenters.forEach(dc => {
         const region = regions[dc.name];
@@ -276,51 +279,67 @@ export const calculatePricingEstimate = (datacenters, regions, estimateResults) 
 
         if (results && region) {
             const regionPricing = getRegionPricing(region);
+            
+            const savingsPlan = savingsPlansMap[region];
+
+           
             if (!regionPricing) {
                 return;
             }
 
             let total_datacenter_provisioned_cost = 0;
             let total_datacenter_on_demand_cost = 0;
+            let total_datacenter_provisioned_cost_savings = 0;
+            let total_datacenter_on_demand_cost_savings = 0;
             const keyspaceCosts = {};
             keyspaceCosts['totals'] = {
                 name: 'region total',
                 storage: 0,
                 backup: 0,
                 reads_provisioned: 0,
+                reads_provisioned_savings: 0,
                 writes_provisioned: 0,
+                writes_provisioned_savings: 0,
                 reads_on_demand: 0,
+                reads_on_demand_savings: 0,
                 writes_on_demand: 0,
+                writes_on_demand_savings: 0,
                 ttlDeletes: 0,
                 provisioned_total: 0,
-                on_demand_total: 0
+                on_demand_total: 0,
+                provisioned_total_savings: 0,
+                on_demand_total_savings: 0,
             };
 
             Object.entries(results).forEach(([keyspace, data]) => {
 
-                const oneDemandWriteCost = calculateOnDemandWriteUnitsPerMonthCost(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing);
-                const oneDemandReadCost = calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing);
-                const ttlDeleteCost = calculateTtlUnitsPerMonthCost(data.ttls_per_second, data.avg_write_row_size_bytes, regionPricing);
 
-                const provisionedWriteCost = calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing, .70);
-                const provisionedReadCost = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing, .70);
+                const oneDemandWriteCost = calculateOnDemandWriteUnitsPerMonthCost(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing.writeRequestPrice);
                 
-                const storageCost = calculateStorageCostPerMonth(data.uncompressed_single_replica_gb, regionPricing);
-                const backupCost = calculateBackupCostPerMonth(data.uncompressed_single_replica_gb, regionPricing);
-                
-                const provisioned_total = provisionedCapacityTotalMonthlyCost(
-                    data.reads_per_second, data.avg_read_row_size_bytes, .70, 
-                     data.writes_per_second, data.avg_write_row_size_bytes, .70, 
-                     data.ttls_per_second, data.avg_write_row_size_bytes, 
-                      data.uncompressed_single_replica_gb, data.uncompressed_single_replica_gb,
-                      regionPricing);
+                const oneDemandReadCost = calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing.readRequestPrice);
+                const ttlDeleteCost = calculateTtlUnitsPerMonthCost(data.ttls_per_second, data.avg_write_row_size_bytes, regionPricing.ttlDeletesPrice);
 
-                const on_demand_total = calculateOnDemandCapcityTotalMonthlyCost(  
-                    data.reads_per_second, data.avg_read_row_size_bytes, 
-                    data.writes_per_second, data.avg_write_row_size_bytes, 
-                    data.ttls_per_second, data.avg_write_row_size_bytes, 
-                    data.uncompressed_single_replica_gb, data.uncompressed_single_replica_gb,
-                    regionPricing);
+                const oneDemandWriteCostWithSavings = calculateOnDemandWriteUnitsPerMonthCost(data.writes_per_second, data.avg_write_row_size_bytes, savingsPlan['WriteRequestUnits']['rate']);
+                const oneDemandReadCostWithSavings = calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadRequestUnits']['rate']);
+                
+                const provisionedWriteCostWithSavings = calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, savingsPlan['WriteCapacityUnitHrs']['rate'], .70);
+                const provisionedReadCostWithSavings = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadCapacityUnitHrs']['rate'], .70);
+
+                const provisionedWriteCost = calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing.writeRequestPricePerHour, .70);
+                const provisionedReadCost = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing.readRequestPricePerHour, .70);
+                
+                console.log('provisionedReadCost' + provisionedReadCost);
+                console.log('provisionedWriteCost' + provisionedWriteCost);
+
+                const storageCost = calculateStorageCostPerMonth(data.uncompressed_single_replica_gb, regionPricing.storagePricePerGB);
+                const backupCost = calculateBackupCostPerMonth(data.uncompressed_single_replica_gb, regionPricing.pitrPricePerGB);
+                
+                const provisioned_total_savings = calculateProvisionedCapacityTotalMonthlyCostWithAggregates(provisionedReadCostWithSavings, provisionedWriteCostWithSavings, ttlDeleteCost, storageCost, backupCost);
+                const on_demand_total_savings = calculateOnDemandCapcityTotalMonthlyCostWithAggregates(oneDemandReadCostWithSavings, oneDemandWriteCostWithSavings, ttlDeleteCost, storageCost, backupCost);
+
+
+                const provisioned_total = calculateOnDemandCapcityTotalMonthlyCostWithAggregates(provisionedReadCost, provisionedWriteCost, ttlDeleteCost, storageCost, backupCost);
+                const on_demand_total = calculateOnDemandCapcityTotalMonthlyCostWithAggregates(oneDemandReadCost, oneDemandWriteCost, ttlDeleteCost, storageCost, backupCost);
                     
                 keyspaceCosts[keyspace] = {
                     name: keyspace,
@@ -328,11 +347,17 @@ export const calculatePricingEstimate = (datacenters, regions, estimateResults) 
                     backup: backupCost,
                     reads_provisioned: provisionedReadCost,
                     writes_provisioned: provisionedWriteCost,
+                    reads_provisioned_savings: provisionedReadCostWithSavings,
+                    writes_provisioned_savings: provisionedWriteCostWithSavings,
                     reads_on_demand: oneDemandReadCost,
                     writes_on_demand: oneDemandWriteCost,
+                    reads_on_demand_savings: oneDemandReadCostWithSavings,
+                    writes_on_demand_savings: oneDemandWriteCostWithSavings,
                     ttlDeletes: ttlDeleteCost,
                     provisioned_total: provisioned_total,
-                    on_demand_total: on_demand_total
+                    on_demand_total: on_demand_total,
+                    provisioned_total_savings: provisioned_total_savings,
+                    on_demand_total_savings: on_demand_total_savings
                 };
 
                 keyspaceCosts['totals'].storage += storageCost;
@@ -341,12 +366,20 @@ export const calculatePricingEstimate = (datacenters, regions, estimateResults) 
                 keyspaceCosts['totals'].writes_provisioned += provisionedWriteCost;
                 keyspaceCosts['totals'].reads_on_demand += oneDemandReadCost;
                 keyspaceCosts['totals'].writes_on_demand += oneDemandWriteCost;
+                keyspaceCosts['totals'].reads_provisioned_savings += provisionedReadCostWithSavings;
+                keyspaceCosts['totals'].writes_provisioned_savings += provisionedWriteCostWithSavings;
+                keyspaceCosts['totals'].reads_on_demand_savings += oneDemandReadCostWithSavings;
+                keyspaceCosts['totals'].writes_on_demand_savings += oneDemandWriteCostWithSavings;
                 keyspaceCosts['totals'].ttlDeletes += ttlDeleteCost;
                 keyspaceCosts['totals'].provisioned_total += provisioned_total;
                 keyspaceCosts['totals'].on_demand_total += on_demand_total;
+                keyspaceCosts['totals'].provisioned_total_savings += provisioned_total_savings;
+                keyspaceCosts['totals'].on_demand_total_savings += on_demand_total_savings;
 
                 total_datacenter_provisioned_cost += provisioned_total;
                 total_datacenter_on_demand_cost += on_demand_total;
+                total_datacenter_provisioned_cost_savings += provisioned_total_savings;
+                total_datacenter_on_demand_cost_savings += on_demand_total_savings;
             });
 
             const totals = keyspaceCosts['totals'];
@@ -357,18 +390,24 @@ export const calculatePricingEstimate = (datacenters, regions, estimateResults) 
                 region,
                 keyspaceCosts,
                 total_datacenter_provisioned_cost: total_datacenter_provisioned_cost,
-                total_datacenter_on_demand_cost: total_datacenter_on_demand_cost
+                total_datacenter_on_demand_cost: total_datacenter_on_demand_cost,
+                total_datacenter_provisioned_cost_savings: total_datacenter_provisioned_cost_savings,
+                total_datacenter_on_demand_cost_savings: total_datacenter_on_demand_cost_savings
             };
 
             total_monthly_provisioned_cost += total_datacenter_provisioned_cost;
             total_monthly_on_demand_cost += total_datacenter_on_demand_cost;
+            total_monthly_provisioned_cost_savings += total_datacenter_provisioned_cost_savings;
+            total_monthly_on_demand_cost_savings += total_datacenter_on_demand_cost_savings;
         }
     });
 
     return {
         total_datacenter_cost: pricingData,
         total_monthly_provisioned_cost: total_monthly_provisioned_cost,
-        total_monthly_on_demand_cost: total_monthly_on_demand_cost
+        total_monthly_on_demand_cost: total_monthly_on_demand_cost,
+        total_monthly_provisioned_cost_savings: total_monthly_provisioned_cost_savings,
+        total_monthly_on_demand_cost_savings: total_monthly_on_demand_cost_savings
     };
 };
 /***
@@ -421,38 +460,7 @@ export const calculateUncompressedStoragePerNode = (table_live_space_gb, compres
  * @param {Object} regionPricing - Region pricing primitives from pricing JSON.
  * @returns {number}
  */
-export const provisionedCapacityTotalMonthlyCost = (reads_per_second, avg_read_row_size_bytes, reads_target_utilization, writes_per_second, avg_write_row_size_bytes, writes_target_utilization, ttls_per_second, avg_ttl_row_size_bytes, uncompressed_storage_size_gb, uncompressed_backup_size_gb, regionPricing) => {
-    const provisionedReadCost = calculateProvisionedReadCostPerMonth(reads_per_second, avg_read_row_size_bytes, regionPricing, reads_target_utilization);
-    const provisionedWriteCost = calculateProvisionedWriteCostPerMonth(writes_per_second, avg_write_row_size_bytes, regionPricing, writes_target_utilization);
-    const ttlDeleteCost = calculateTtlUnitsPerMonthCost(ttls_per_second, avg_ttl_row_size_bytes, regionPricing);
-    const storageCost = calculateStorageCostPerMonth(uncompressed_storage_size_gb, regionPricing);
-    const backupCost = calculateBackupCostPerMonth(uncompressed_backup_size_gb, regionPricing);
-    return calculateProvisionedCapacityTotalMonthlyCostWithAggregates(provisionedReadCost, provisionedWriteCost, ttlDeleteCost, storageCost, backupCost);
-} 
 
-/**
- * Total monthly cost using on-demand capacity and storage/backup.
- * @param {number} reads_per_second - Read operations per second.
- * @param {number} avg_read_row_size_bytes - Average row size in bytes.
- * @param {number} writes_per_second - Write operations per second.
- * @param {number} avg_write_row_size_bytes - Average row size in bytes.
- * @param {number} ttls_per_second - TTL ops/s.
- * @param {number} avg_ttl_row_size_bytes - Average row size in bytes for TTL.
- * @param {number} uncompressed_storage_size_gb - Uncompressed storage size in GB.
- * @param {number} uncompressed_backup_size_gb - Uncompressed backup size in GB.
- * @param {Object} regionPricing - Pricing primitives.
- * @returns {number}
- */
-export const calculateOnDemandCapcityTotalMonthlyCost = (reads_per_second, avg_read_row_size_bytes, writes_per_second, avg_write_row_size_bytes, ttls_per_second, avg_ttl_row_size_bytes, uncompressed_storage_size_gb, uncompressed_backup_size_gb, regionPricing) => {
-    
-    const onDemandReadCost = calculateOnDemandReadUnitsPerMonthCost(reads_per_second, avg_read_row_size_bytes, regionPricing);
-    const onDemandWriteCost = calculateOnDemandWriteUnitsPerMonthCost(writes_per_second, avg_write_row_size_bytes, regionPricing);
-    const onDemandTtlDeleteCost = calculateTtlUnitsPerMonthCost(ttls_per_second, avg_ttl_row_size_bytes, regionPricing);
-    const storageCost = calculateStorageCostPerMonth(uncompressed_storage_size_gb, regionPricing);
-    const backupCost = calculateBackupCostPerMonth(uncompressed_backup_size_gb, regionPricing);
-
-    return calculateOnDemandCapcityTotalMonthlyCostWithAggregates(onDemandReadCost, onDemandWriteCost, onDemandTtlDeleteCost, storageCost, backupCost);
-} 
 /**
  * Sum helper for on-demand cost components.
  * @param {number} onDemandReadCost
@@ -484,8 +492,8 @@ export const calculateProvisionedCapacityTotalMonthlyCostWithAggregates = (provi
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateProvisionedReadCostPerMonthWithDefaultProvisioning = (reads_per_second, avg_read_row_size_bytes, regionPricing) => {
-    return calculateProvisionedReadCostPerMonth(reads_per_second, avg_read_row_size_bytes, regionPricing, .70);
+export const calculateProvisionedReadCostPerMonthWithDefaultProvisioning = (reads_per_second, avg_read_row_size_bytes, regionPricing, savings_percentage=0.0    ) => {
+    return calculateProvisionedReadCostPerMonth(reads_per_second, avg_read_row_size_bytes, regionPricing, .70, savings_percentage);
 };
 /**
  * Provisioned monthly read cost.
@@ -495,8 +503,8 @@ export const calculateProvisionedReadCostPerMonthWithDefaultProvisioning = (read
  * @param {number} target_utilization - [0..1].
  * @returns {number}
  */
-export const calculateProvisionedReadCostPerMonth = (reads_per_second, avg_read_row_size_bytes, regionPricing, target_utilization) => {
-    return reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes) * HOURS_PER_MONTH * regionPricing.readRequestPricePerHour / target_utilization;
+export const calculateProvisionedReadCostPerMonth = (reads_per_second, avg_read_row_size_bytes, readRequestPricePerHour, target_utilization) => {
+    return (reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes) * HOURS_PER_MONTH * readRequestPricePerHour) / target_utilization;
 };
 /**
  * Provisioned monthly write cost using default target utilization (70%).
@@ -517,8 +525,8 @@ export const calculateProvisionedWriteCostPerMonthWithDefaultProvisioning = (wri
  * @param {number} target_utilization - [0..1].
  * @returns {number}
  */
-export const calculateProvisionedWriteCostPerMonth = (writes_per_second, avg_write_row_size_bytes, regionPricing, target_utilization) => {
-    return writes_per_second * calculateWriteUnitsPerOperation(avg_write_row_size_bytes) * HOURS_PER_MONTH * regionPricing.writeRequestPricePerHour / target_utilization;
+export const calculateProvisionedWriteCostPerMonth = (writes_per_second, avg_write_row_size_bytes, writeRequestPricePerHour, target_utilization=0.70) => {
+    return (writes_per_second * calculateWriteUnitsPerOperation(avg_write_row_size_bytes) * HOURS_PER_MONTH * writeRequestPricePerHour) / target_utilization;
 };
 
 /**
@@ -527,8 +535,8 @@ export const calculateProvisionedWriteCostPerMonth = (writes_per_second, avg_wri
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateStorageCostPerMonth = (uncompressed_single_replica_gb, regionPricing) => {
-    return uncompressed_single_replica_gb * regionPricing.storagePricePerGB;
+export const calculateStorageCostPerMonth = (uncompressed_single_replica_gb, storagePricePerGB) => {
+    return uncompressed_single_replica_gb * storagePricePerGB;
 };
 
 /**
@@ -537,8 +545,8 @@ export const calculateStorageCostPerMonth = (uncompressed_single_replica_gb, reg
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateBackupCostPerMonth = (uncompressed_single_replica_gb, regionPricing) => {
-    return uncompressed_single_replica_gb * regionPricing.pitrPricePerGB;
+export const calculateBackupCostPerMonth = (uncompressed_single_replica_gb, pitrPricePerGB) => {
+    return uncompressed_single_replica_gb * pitrPricePerGB;
 };
 
 /**
@@ -548,8 +556,8 @@ export const calculateBackupCostPerMonth = (uncompressed_single_replica_gb, regi
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateOnDemandReadUnitsPerMonthCost = (reads_per_second, avg_read_row_size_bytes, regionPricing) => {
-    return calcualteOnDemandReadUnitsPerMonth(reads_per_second, avg_read_row_size_bytes) * regionPricing.readRequestPrice;
+export const calculateOnDemandReadUnitsPerMonthCost = (reads_per_second, avg_read_row_size_bytes, onDemandReadPrice) => {
+    return calcualteOnDemandReadUnitsPerMonth(reads_per_second, avg_read_row_size_bytes) * onDemandReadPrice;
 };
 
 /**
@@ -559,8 +567,8 @@ export const calculateOnDemandReadUnitsPerMonthCost = (reads_per_second, avg_rea
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateOnDemandWriteUnitsPerMonthCost = (writes_per_second, avg_write_row_size_bytes, regionPricing) => {
-    return calculateOnDemandWriteUnitsPerMonth(writes_per_second, avg_write_row_size_bytes) * regionPricing.writeRequestPrice;
+export const calculateOnDemandWriteUnitsPerMonthCost = (writes_per_second, avg_write_row_size_bytes, onDemandWritePrice, savings_percentage=0.0) => {
+    return calculateOnDemandWriteUnitsPerMonth(writes_per_second, avg_write_row_size_bytes) * onDemandWritePrice;
 };
 
 /**
@@ -570,8 +578,8 @@ export const calculateOnDemandWriteUnitsPerMonthCost = (writes_per_second, avg_w
  * @param {Object} regionPricing
  * @returns {number}
  */
-export const calculateTtlUnitsPerMonthCost = (ttls_per_second, avg_write_row_size_bytes, regionPricing) => {
-    return calculateOnDemandTtlUnitsPerMonth(ttls_per_second, avg_write_row_size_bytes) * regionPricing.ttlDeletesPrice;
+export const calculateTtlUnitsPerMonthCost = (ttls_per_second, avg_write_row_size_bytes, ttlDeletesPrice) => {
+    return calculateOnDemandTtlUnitsPerMonth(ttls_per_second, avg_write_row_size_bytes) * ttlDeletesPrice;
 };
 
 /**

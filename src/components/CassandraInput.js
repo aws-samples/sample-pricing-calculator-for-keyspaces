@@ -541,7 +541,7 @@ const ResultsTable = ({ results }) => {
                         <Container key={datacenter}>
                             <SpaceBetween size="m">
                                 <Header variant="h3">
-                                    {datacenter} ({data.region}) - {formatCurrency(data.total_datacenter_provisioned_cost)}/month
+                                    {datacenter} ({data.region}) - {formatCurrency(pricing.total_monthly_provisioned_cost_savings)}/month
                                 </Header>
                                 
                                 <Table
@@ -619,9 +619,9 @@ const ResultsTable = ({ results }) => {
                     ))}
                     
                     <Alert type="info">
-                        <strong>Total Estimated Monthly Cost (Provisioned): {formatCurrency(pricing.total_monthly_provisioned_cost)}</strong>
+                        <strong>Total Estimated Monthly Cost (Provisioned): {formatCurrency(pricing.total_monthly_provisioned_cost)} / Savings Plan: {formatCurrency(pricing.total_monthly_provisioned_cost_savings)}</strong>
                         <br />
-                        <strong>Total Estimated Monthly Cost (On-Demand): {formatCurrency(pricing.total_monthly_on_demand_cost)}</strong>
+                        <strong>Total Estimated Monthly Cost (On-Demand): {formatCurrency(pricing.total_monthly_on_demand_cost)} / Savings Plan: {formatCurrency(pricing.total_monthly_on_demand_cost_savings)}</strong>
                         <br />
                         Note: This estimate uses Amazon Keyspaces pricing for the selected regions. Costs are calculated based on usage patterns from your Cassandra cluster data.
                     </Alert>

@@ -165,11 +165,12 @@ class CreatePDFReport {
         this.yPosition += 5;
 
         const keyspacesPricingContent = 
-        `        • Monthly Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)}
-        • Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}
+        `        • Monthly Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)} / Savings Plan: ${formatCurrency(pricing.total_monthly_provisioned_cost_savings)}
+        • Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)} / Savings Plan: ${formatCurrency(pricing.total_monthly_provisioned_cost_savings * 12)}
         -----------------------------------------------------------
-        • Monthly On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)}
-        • Annual On-Demand Cost: ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}
+        • Monthly On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)} / Savings Plan: ${formatCurrency(pricing.total_monthly_on_demand_cost_savings)}
+        • Annual On-Demand Cost: ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)} / Savings Plan: ${formatCurrency(pricing.total_monthly_on_demand_cost_savings * 12)}
+       
 
 
         This Keyspaces estimate is based on your current Cassandra cluster configuration and usage patterns. The provisioned pricing model offers predictable costs with 70% target utilization, while on-demand pricing provides flexibility for variable workloads.
