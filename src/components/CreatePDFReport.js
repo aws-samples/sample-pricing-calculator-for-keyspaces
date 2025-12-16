@@ -100,6 +100,7 @@ class CreatePDFReport {
         let operationsCost = 0;
         let perNodeCost = 0;
         let totalNodeCost = 0;
+        let licenseCost = 0;
         if (tcoData) {
             datacenters.forEach(dc => {
                 const tco = tcoData[dc.name];
@@ -111,6 +112,7 @@ class CreatePDFReport {
                  const networkOutCost = (tco.single_node?.network_out?.monthly_cost || 0);
                  const networkInCost = (tco.single_node?.network_in?.monthly_cost || 0);
                  networkCost += (networkOutCost + networkInCost) * dc.nodeCount;
+                 licenseCost += (tco.single_node?.license?.monthly_cost || 0) * dc.nodeCount;
 
                  perNodeCost = instanceCost + storageCost + backupCost + networkCost;
                  totalNodeCost += perNodeCost
@@ -149,6 +151,7 @@ class CreatePDFReport {
         • Storage Cost: ${formatCurrency(storageCost || 0)}
         • Backup Cost: ${formatCurrency(backupCost || 0)}
         • Network Cost: ${formatCurrency(networkCost || 0)}
+        • License Cost: ${formatCurrency(licenseCost || 0)}
         • Operations Cost: ${formatCurrency(operationsCost || 0)}
         -----------------------------------------------------------
         • Total MonthlyCost: ${formatCurrency(totalCassandraTCO)}
@@ -374,9 +377,10 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
             const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
             const networkCost = networkOutCost + networkInCost;
+            const licenseCost = tco.single_node?.license?.monthly_cost || 0;
 
             // Total per-node cost
-            const perNodeCost = instanceCost + storageCost + backupCost + networkCost;
+            const perNodeCost = instanceCost + storageCost + backupCost + networkCost + licenseCost;
 
             // Total node cost for datacenter (per node * number of nodes)
             const totalNodeCost = perNodeCost * dc.nodeCount;
@@ -395,6 +399,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 formatCurrency(storageCost),
                 formatCurrency(backupCost),
                 formatCurrency(networkCost),
+                formatCurrency(licenseCost),
                 formatCurrency(perNodeCost),
                 formatCurrency(totalNodeCost),
                 formatCurrency(operationsCost),
@@ -408,7 +413,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.doc.autoTable({
             startY: this.yPosition,
             startX: this.xPosition - 10,
-            head: [['Datacenter', 'Nodes', 'Instance/Node', 'Storage/Node', 'Backup/Node', 'Network/Node', 'Per Node Total', 'Node Total (All Nodes)', 'Operations', 'Datacenter TCO']],
+            head: [['Datacenter', 'Nodes', 'Instance/Node', 'Storage/Node', 'Backup/Node', 'Network/Node', 'License/Node', 'Per Node Total', 'Node Total (All Nodes)', 'Operations', 'Datacenter TCO']],
             body: tcoTableData,
             theme: 'grid',
             headStyles: { fillColor: [66, 139, 202] },

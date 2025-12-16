@@ -318,6 +318,10 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
                 "network_in_daily_gb": network_data_in["daily_gb_in"],
                 "network_in_monthly_gb": network_data_in["monthly_gb_in"],
                 "monthly_cost": float(monthly_network_in)
+            },
+            "license": {
+                "license_type": "cassandra",
+                "monthly_cost": 250
             }
         },
         "operations": {
