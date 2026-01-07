@@ -56,7 +56,7 @@ export const getFieldInfoContent = (key) => {
       "Your average row size determines how many capacity units each request consumes. The pricing calculator uses the average row size to estimate reads, writes, and TTL capacity for all Regions.",
 
     storageSizeInGb: 
-      "Enter the uncompressed size of your data for a single replica. In Apache Cassandra, you often have multiple replicas (three replicas in a datacenter * multiple datacenters). Amazon Keyspaces storage is based on the raw size of a single replica in a Region. This calculator automatically applies the entered storage amount to every Region the table is replicated in. If you enter 1000GB (1TB) and have three Regions, the calculator estimates a total of 3000 GB (3TB) storage size.",
+      "Enter the uncompressed size of your data for a single replica. In Apache Cassandra, you often have multiple replicas (three replicas in a datacenter * multiple datacenters). Amazon Keyspaces storage is based on the raw size of a single replica in a Region. This calculator automatically applies the entered storage amount to every Region the table is replicated in. If you enter 1024GB (1TB) and have three Regions, the calculator estimates a total of 3000 GB (3TB) storage size.",
 
     pointInTimeRecoveryForBackups: 
       "Point-in-Time Recovery (PITR) continuously backs up your table data to help protect against accidental writes or deletes. PITR is based on the storage size. If you enable PITR, its storage usage is based on your table’s total storage. If your table uses 3000 GB (3TB) of storage, the additional PITR storage is 3000 GB (TB).",

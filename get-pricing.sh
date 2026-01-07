@@ -137,11 +137,18 @@ curl --compressed https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/mcs/USD
       first=0
     fi
 
+    modified_name="${long_name/#Europe/EU}"
+    
     # JSON key/value line
-    printf '  "%s": "%s"' "$i" "$long_name"
+    printf '  "%s": "%s"' "$i" "$modified_name"
     echo ","
-    printf '  "%s": "%s"' "$long_name" "$i"
+    printf '  "%s": "%s"' "$modified_name" "$i"
   done
+  echo  ","
+  printf '  "AWS GovCloud (US)": "us-gov-west-1",\n'
+  printf '  "us-gov-west-1": "AWS GovCloud (US)",\n'
+  printf '  "us-gov-east-1": "AWS GovCloud (US-East)",\n'
+  printf '  "AWS GovCloud (US-East)": "us-gov-east-1"'
 
   echo
   echo "}"

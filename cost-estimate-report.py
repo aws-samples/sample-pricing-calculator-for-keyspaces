@@ -33,7 +33,7 @@ import json
 #   --number-of-nodes 6
 
 
-GIGABYTE = Decimal(1000000000)
+GIGABYTE = Decimal(1024 * 1024 * 1024)
 
 GOSSIP_OUT_BYTES = Decimal(1638)
 GOSSIP_IN_BYTES = Decimal(3072)
@@ -1494,10 +1494,10 @@ def print_rows(report_name, totals):
  
 
 def calcualteCassandraSizeGB (total_compressed, number_of_nodes):
-    return (total_compressed * number_of_nodes)/Decimal(1000000000)
+    return (total_compressed * number_of_nodes)/Decimal(1024*1024*1024)
 
 def calcualteKeyspacesSizeGB (total_uncompressed, number_of_nodes, replication_factor):
-    return ((total_compressed * number_of_nodes)/Decimal(replication_factor))/Decimal(1000000000)
+    return ((total_compressed * number_of_nodes)/Decimal(replication_factor))/Decimal(1024*1024*1024)
 
 def calcualteWriteUnits (total_writes, number_of_nodes, replication_factor, uptime_sec):
     return ((total_writes * number_of_nodes)/Decimal(replication_factor))/uptime_sec

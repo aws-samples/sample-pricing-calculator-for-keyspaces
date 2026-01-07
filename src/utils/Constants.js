@@ -11,6 +11,6 @@ export const REPLICATION_FACTOR = 3;
 
 export const SECONDS_PER_MONTH = (365/12) * (24 * 60 * 60);
 
-export const GIGABYTE = 1000000000;
+export const GIGABYTE = 1024 * 1024 * 1024;
 
 
