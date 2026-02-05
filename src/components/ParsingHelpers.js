@@ -118,6 +118,10 @@ export const parse_nodetool_tablestats = (content) => {
                     const ratioStr = match[1].trim();
                     try {
                         compressionRatio = parseFloat(ratioStr);
+
+                        if(compressionRatio <= 0) {
+                            compressionRatio = 1;
+                        }
                     } catch (e) {
                         compressionRatio = 1;
                     }
