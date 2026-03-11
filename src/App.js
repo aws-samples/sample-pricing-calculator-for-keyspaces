@@ -4,8 +4,11 @@ import Navigation from './components/Navigation';
 import MultiRegionForm from './components/MultiRegionForm';
 import KeyspacesHelpPanel from './components/KeyspacesHelpPanel';
 import CassandraInput from './components/CassandraInput';
-import pricingDataJson from './data/mcs.json';  // Import the JSON directly
-import  saveingsPlansMap  from './components/PricingData';
+import {
+    buildKeyspacesEstimateInput,
+    calculatePricingEstimate,
+    mapPricingEstimateToKeyspacesTable
+} from './utils/PricingFormulas';
 import './App.css';
 
 import {
@@ -17,10 +20,8 @@ import {
     Header
 } from '@cloudscape-design/components';
 import '@cloudscape-design/global-styles/index.css';
-import { savingsPlansData } from './components/PricingData';
 
 function App() {
-    const [currentPricing, setCurrentPricing] = useState({});
     const [provisionedPricing, setProvisionedPricing] = useState({});
     const [onDemandPricing, setOnDemandPricing] = useState({});
     const [selectedRegion, setSelectedRegion] = useState('US East (N. Virginia)');
@@ -286,10 +287,6 @@ function App() {
     };
 
     useEffect(() => {
-        setCurrentPricing(processRegion('US East (N. Virginia)'));
-    }, []);
-
-    useEffect(() => {
         setFormData(prevFormData => {
             const newFormData = { ...prevFormData };
             const defaultData = {
@@ -323,189 +320,26 @@ function App() {
 
     // Update the pricing calculation useEffect to depend on formData
     useEffect(() => {
-        if (formData && Object.keys(formData).length > 0) {
-            calculatePricing(formData);
-        }
+        if (!formData || Object.keys(formData).length === 0 || !selectedRegion) return;
+        const { datacenters, regions, estimateResults } = buildKeyspacesEstimateInput(
+            formData,
+            selectedRegion,
+            multiSelectedRegions
+        );
+        if (datacenters.length === 0) return;
+        const pricingResult = calculatePricingEstimate(datacenters, regions, estimateResults);
+        const { provisionedPricing: provisioned, onDemandPricing: onDemand } =
+            mapPricingEstimateToKeyspacesTable(pricingResult);
+        setProvisionedPricing(provisioned);
+        setOnDemandPricing(onDemand);
     }, [selectedRegion, multiSelectedRegions, formData]);
-
-    const processRegion = (regionCode) => {
-        if (!pricingDataJson || !pricingDataJson.regions || !pricingDataJson.regions[regionCode]) {
-            console.log('No pricing data available for region:', regionCode);
-            return null;
-        }
-
-        const regionPricing = pricingDataJson.regions[regionCode];
-        
-        return {
-            readRequestPrice: regionPricing['MCS-ReadUnits'].price,
-            writeRequestPrice: regionPricing['MCS-WriteUnits'].price,
-            writeRequestPricePerHour: regionPricing['Provisioned Write Units'].price,
-            readRequestPricePerHour: regionPricing['Provisioned Read Units'].price,
-            storagePricePerGB: regionPricing['AmazonMCS - Indexed DataStore per GB-Mo'].price,
-            pitrPricePerGB: regionPricing['Point-In-Time-Restore PITR Backup Storage per GB-Mo'].price,
-            ttlDeletesPrice: regionPricing['Time to Live'].price
-        };
-    };
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        calculatePricing(formData);
     };
 
     const handleKeyUp = (e) => {
-        // Debounce the calculation to prevent too many updates
-        if (e) {
-            e.preventDefault();
-        }
-        calculatePricing(formData);
-    };
-
-    function getAvgProvisionedCapacityUnits(requests, size, cuMultiplier) {
-        return Math.ceil((requests * Math.ceil(size * 1 / (cuMultiplier * 1024)))/.70);
-    }
-
-    function getOnDemandCUs(requests, size, cuMultiplier) {
-        return Math.ceil(requests * Math.ceil(size * 1 / (cuMultiplier * 1024))) * 3600 * 24 * 30.41667;
-    }
-
-    function getStrongConsistencyUnits(avgCUs, avgHours, price) {
-        return Math.ceil(avgCUs * avgHours * price * 30.41667);
-    }
-
-    var getTtlDeletesPrice = (ttlDeletesPerDay, averageRowSizeInBytes) => {
-        return (ttlDeletesPerDay * Math.ceil(averageRowSizeInBytes/1024)*60*60*24*365)/12;
-    }
-
-    const calculatePricing = (formData) => {
-        if (!formData || !selectedRegion || !formData[selectedRegion]) {
-            return;
-        }
-
-        const isMultiRegion = multiSelectedRegions.length > 0;
-        let totalStrongConsistencyReads = 0;
-        let totalEventualConsistencyReads = 0;
-        let totalStrongConsistencyWrites = 0;
-        let totalEventualConsistencyWrites = 0;
-        let totalStrongConsistencyReadsSavings = 0;
-        let totalStrongConsistencyWritesSavings = 0;
-        let totalEventualConsistencyReadsSavings = 0;
-        let totalEventualConsistencyWritesSavings = 0;
-        let totalStoragePrice = 0;
-        let totalBackupPrice = 0;
-        let totalTtlDeletesPrice = 0;
-    
-        let totalOnDemandReads = 0;
-        let totalOnDemandWrites = 0;
-        let totalOnDemandEventualConsistencyReads = 0;
-        let totalOnDemandEventualConsistencyWrites = 0;
-    
-        let totalOnDemandStrongConsistencyReadsSavings = 0;
-        let totalOnDemandStrongConsistencyWritesSavings = 0;
-        let totalOnDemandEventualConsistencyReadsSavings = 0;
-        let totalOnDemandEventualConsistencyWritesSavings = 0;
-
-        const regions = [selectedRegion, ...multiSelectedRegions.map(r => r.value)];
-        
-        regions.forEach(region => {
-            let regionData = formData[region];
-            let regionPricing;
-    
-            if (!regionData) {
-                return; // Skip if region data is not available
-            }
-    
-            if (isMultiRegion) {
-                if (region === 'default') {
-                    region = selectedRegion;
-                }  
-            }
-            regionPricing = processRegion(region);
-            const savingsPlanData = saveingsPlansMap[region];
-
-            console.log(savingsPlanData);
-
-            if (regionPricing) {
-
-                const avgReadProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4);
-                const strongConsistencyReads = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, regionPricing.readRequestPricePerHour);
-                const strongConsistencyReadsSavings = getStrongConsistencyUnits(avgReadProvisionedCapacityUnits, 24, savingsPlanData['ReadCapacityUnitHrs']['rate']);
-    
-                const avgWriteProvisionedCapacityUnits = getAvgProvisionedCapacityUnits(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1);
-                const strongConsistencyWrites = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, regionPricing.writeRequestPricePerHour);
-                const strongConsistencyWritesSavings = getStrongConsistencyUnits(avgWriteProvisionedCapacityUnits, 24, savingsPlanData['WriteCapacityUnitHrs']['rate']);
-
-                const storagePrice = regionData.storageSizeInGb * regionPricing.storagePricePerGB;
-                const backupPrice = regionData.storageSizeInGb * regionPricing.pitrPricePerGB;
-    
-                const onDemandReadsPrice = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * regionPricing.readRequestPrice;
-                const onDemandWritesPrice = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * regionPricing.writeRequestPrice;
-                const onDemandStrongConsistencyReadsSavings = getOnDemandCUs(regionData.averageReadRequestsPerSecond, regionData.averageRowSizeInBytes, 4) * savingsPlanData['ReadRequestUnits']['rate'];
-                const onDemandStrongConsistencyWritesSavings = getOnDemandCUs(regionData.averageWriteRequestsPerSecond, regionData.averageRowSizeInBytes, 1) * savingsPlanData['WriteRequestUnits']['rate'];
-
-                const ttlDeletesPrice = getTtlDeletesPrice(regionData.averageTtlDeletesPerSecond, regionData.averageRowSizeInBytes) * regionPricing.ttlDeletesPrice;
-    
-                totalStrongConsistencyReads += strongConsistencyReads;
-                totalEventualConsistencyReads += strongConsistencyReads / 2;
-                totalStrongConsistencyWrites += strongConsistencyWrites;
-                totalEventualConsistencyWrites += strongConsistencyWrites;
-
-                totalStrongConsistencyReadsSavings += strongConsistencyReadsSavings;
-                totalStrongConsistencyWritesSavings += strongConsistencyWritesSavings;
-                totalEventualConsistencyReadsSavings += strongConsistencyReadsSavings/2;
-                totalEventualConsistencyWritesSavings += strongConsistencyWritesSavings;
-
-                totalStoragePrice += storagePrice;
-                
-                totalBackupPrice += backupPrice;
-                totalTtlDeletesPrice += ttlDeletesPrice;
-    
-                totalOnDemandReads += onDemandReadsPrice;
-                totalOnDemandEventualConsistencyReads += onDemandReadsPrice / 2;
-                totalOnDemandWrites += onDemandWritesPrice;
-                totalOnDemandEventualConsistencyWrites += onDemandWritesPrice;
-                
-                totalOnDemandStrongConsistencyReadsSavings += onDemandStrongConsistencyReadsSavings;
-                totalOnDemandStrongConsistencyWritesSavings += onDemandStrongConsistencyWritesSavings;
-                totalOnDemandEventualConsistencyReadsSavings += onDemandStrongConsistencyReadsSavings/2;
-                totalOnDemandEventualConsistencyWritesSavings += onDemandStrongConsistencyWritesSavings;
-            }
-        });
-    
-        const writesMultiplier = isMultiRegion ? regions.length : 1;
-    
-        setProvisionedPricing({
-            strongConsistencyReads: totalStrongConsistencyReads,
-            strongConsistencyWrites: totalStrongConsistencyWrites ,
-            eventualConsistencyReads: totalEventualConsistencyReads,
-            eventualConsistencyWrites: totalEventualConsistencyWrites ,
-            strongConsistencyReadsSavings: totalStrongConsistencyReadsSavings,
-            strongConsistencyWritesSavings: totalStrongConsistencyWritesSavings,
-            eventualConsistencyReadsSavings: totalEventualConsistencyReadsSavings,
-            eventualConsistencyWritesSavings: totalEventualConsistencyWritesSavings,
-            strongConsistencyStorage: totalStoragePrice,
-            strongConsistencyBackup: totalBackupPrice,
-            eventualConsistencyStorage: totalStoragePrice,
-            eventualConsistencyBackup: totalBackupPrice,
-            eventualConsistencyTtlDeletesPrice: totalTtlDeletesPrice,
-            strongConsistencyTtlDeletesPrice: totalTtlDeletesPrice
-        });
-    
-        setOnDemandPricing({
-            strongConsistencyReads: totalOnDemandReads,
-            strongConsistencyWrites: totalOnDemandEventualConsistencyWrites ,
-            eventualConsistencyReads: totalOnDemandEventualConsistencyReads ,
-            eventualConsistencyWrites: totalOnDemandWrites ,
-            strongConsistencyReadsSavings: totalOnDemandStrongConsistencyReadsSavings,
-            strongConsistencyWritesSavings: totalOnDemandStrongConsistencyWritesSavings,
-            eventualConsistencyReadsSavings: totalOnDemandEventualConsistencyReadsSavings,
-            eventualConsistencyWritesSavings: totalOnDemandEventualConsistencyWritesSavings,
-            strongConsistencyStorage: totalStoragePrice,
-            strongConsistencyBackup: totalBackupPrice,
-            eventualConsistencyStorage: totalStoragePrice,
-            eventualConsistencyBackup: totalBackupPrice,
-            eventualConsistencyTtlDeletesPrice: totalTtlDeletesPrice,
-            strongConsistencyTtlDeletesPrice: totalTtlDeletesPrice
-        });
+        if (e) e.preventDefault();
     };
 
     return (
