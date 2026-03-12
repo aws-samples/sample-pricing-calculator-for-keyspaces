@@ -3,9 +3,11 @@
 """
 Script: cassandra_tco_analyzer.py
 Description: Execute  TCO analysis - captures instance data and calculates costs in one run
-Usage: python ec2_tco_analyzer.py <region> <instance-id> [--snapshot-retention <days>] [--change-rate <percentage>] [--utilization <percentage>]
+Usage: python cassandra_tco_helper.py <instance-id> [--region <region>] [options]
+  Region is resolved in order: --region, AWS_DEFAULT_REGION/AWS_REGION env, then default profile region.
 """
 
+import os
 import sys
 import json
 import subprocess
@@ -264,22 +266,41 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     placement = instance.get('Placement', {})
     tenancy = placement.get('Tenancy', 'default') if placement else 'default'
     
-    # Get attached volumes (assuming primary volume)
-    storage_type = ''
+    # Get all attached EBS volumes (all block devices)
+    storage_devices = []
     storage_size_gb = 0
-    
+    monthly_storage_total = Decimal('0')
+
     block_devices = instance.get('BlockDeviceMappings', [])
-    if block_devices:
-        # Get the first (primary) volume
-        first_device = block_devices[0]
-        if 'Ebs' in first_device:
-            volume_id = first_device['Ebs'].get('VolumeId')
-            if volume_id:
-                volume = get_volume_details(volume_id, region)
-                if volume:
-                    storage_type = volume.get('VolumeType', '')
-                    storage_size_gb = volume.get('Size', 0)
-    
+    for block_device in block_devices:
+        if 'Ebs' not in block_device:
+            continue
+        volume_id = block_device['Ebs'].get('VolumeId')
+        if not volume_id:
+            continue
+        volume = get_volume_details(volume_id, region)
+        if not volume:
+            continue
+        dev_type = volume.get('VolumeType', '')
+        dev_size_gb = volume.get('Size', 0)
+        type_key = map_volume_type_to_storage_type(dev_type)
+        price_per_gb = get_storage_price(type_key) if type_key else Decimal('0.10')
+        dev_monthly = Decimal(str(price_per_gb)) * dev_size_gb
+        storage_devices.append({
+            "storage_type": dev_type,
+            "size_gb": dev_size_gb,
+            "monthly_cost": float(dev_monthly)
+        })
+        storage_size_gb += dev_size_gb
+        monthly_storage_total += dev_monthly
+
+    # Build storage output: devices list plus totals (report uses storage.monthly_cost and storage.size_gb)
+    storage_output = {
+        "devices": storage_devices,
+        "size_gb": storage_size_gb,
+        "monthly_cost": float(monthly_storage_total)
+    }
+
     # Get network metrics
     network_data = get_network_metrics(instance_id, region)
     network_data_in = get_network_metrics_in(instance_id, region)
@@ -289,13 +310,10 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     if not compute_price:
         return None
     
-    storage_type_key = map_volume_type_to_storage_type(storage_type)
-    storage_price = get_storage_price(storage_type_key) if storage_type_key else 0.10
-    
-    # Calculate costs
+    # Calculate costs (storage already computed per device above)
     hourly = Decimal(str(compute_price))
     monthly_compute = hourly * 730
-    monthly_storage = Decimal(str(storage_price)) * storage_size_gb
+    monthly_storage = monthly_storage_total
     monthly_network_out = Decimal(str(calculate_data_transfer_costs(network_data["monthly_gb_out"])))
     monthly_network_in = Decimal(str(calculate_data_transfer_costs(network_data_in["monthly_gb_in"])))
     monthly_network = monthly_network_out + monthly_network_in
@@ -307,7 +325,7 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     result = {
         "single_node": {
             "instance": {"instance_types": instance_type, "monthly_cost": float(monthly_compute)},
-            "storage": {"storage_type": storage_type, "size_gb": storage_size_gb, "monthly_cost": float(monthly_storage)},
+            "storage": storage_output,
             "backup": {"backup_type": "ebs_snapshot", "size_gb": storage_size_gb, "monthly_cost": float(snapshot_costs['monthly_cost'])},
             "network_out": {
                 "network_out_daily_gb": network_data["daily_gb_out"], 
@@ -335,7 +353,7 @@ def capture_and_calculate_costs(instance_id, region, snapshot_retention=7, chang
     costs_summary = {
         'instance_type': instance_type,
         'compute': {'hourly': hourly, 'monthly': monthly_compute},
-        'storage': {'type': storage_type, 'size_gb': storage_size_gb, 'price_per_gb': Decimal(str(storage_price)), 'monthly': monthly_storage},
+        'storage': {'devices': storage_devices, 'size_gb': storage_size_gb, 'monthly': monthly_storage},
         'network_out': {
             'monthly_gb_out': network_data["monthly_gb_out"],
             'monthly': monthly_network_out
@@ -363,9 +381,9 @@ def display_cost_summary(costs, snapshot_params):
     print(f"Monthly: ${costs['compute']['monthly']:.2f}")
     
     print(f"\nSTORAGE COSTS:")
-    print(f"Type: {costs['storage']['type']}, Size: {costs['storage']['size_gb']} GB")
-    print(f"Price per GB: ${costs['storage']['price_per_gb']:.4f}")
-    print(f"Monthly: ${costs['storage']['monthly']:.2f}")
+    print(f"Total Size: {costs['storage']['size_gb']} GB, Monthly: ${costs['storage']['monthly']:.2f}")
+    for i, dev in enumerate(costs['storage'].get('devices', []), 1):
+        print(f"  Device {i}: {dev.get('storage_type', '')} {dev.get('size_gb', 0)} GB, ${dev.get('monthly_cost', 0):.2f}/mo")
     
     if costs.get('network_out', {}).get('monthly_gb_out', 0) > 0 or costs.get('network_in', {}).get('monthly_gb_in', 0) > 0:
         print(f"\nNETWORK TRANSFER COSTS:")
@@ -390,12 +408,29 @@ def display_cost_summary(costs, snapshot_params):
     print(f"\nTOTAL COSTS:")
     print(f"Monthly: ${costs['total']['monthly']:.2f}")
 
+def resolve_region(region_arg):
+    """
+    Resolve AWS region: explicit argument > AWS_DEFAULT_REGION/AWS_REGION env > default profile.
+    """
+    if region_arg:
+        return region_arg
+    region = os.environ.get('AWS_DEFAULT_REGION') or os.environ.get('AWS_REGION')
+    if region:
+        return region
+    try:
+        session = boto3.Session()
+        if session.region_name:
+            return session.region_name
+    except Exception:
+        pass
+    return None
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Complete EC2 TCO analysis - capture data and calculate costs')
-    parser.add_argument('region', help='AWS region (e.g., us-east-1)')
     parser.add_argument('instance_id', type=str, help='EC2 instance ID')
-    parser.add_argument('--snapshot-retention', type=int, default=7, help='Number of days to retain snapshots (default: 7)')
+    parser.add_argument('--region', type=str, default=None, help='AWS region (e.g., us-east-1). Else uses AWS_DEFAULT_REGION/AWS_REGION or profile default.')
+    parser.add_argument('--snapshot-retention', type=int, default=30, help='Number of days to retain snapshots (default: 30)')
     parser.add_argument('--change-rate', type=float, default=5.0, help='Daily data change rate as percentage (default: 5)')
     parser.add_argument('--utilization', type=float, default=50.0, help='Percentage of volume that contains actual data (default: 50)')
     
@@ -403,11 +438,15 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    
+    region = resolve_region(args.region)
+    if not region:
+        print(json.dumps({"error": "Could not determine AWS region. Set AWS_DEFAULT_REGION or AWS_REGION, configure default region in your AWS profile, or pass --region."}, indent=2))
+        sys.exit(1)
+
     # Capture instance data and calculate costs
     result = capture_and_calculate_costs(
         args.instance_id, 
-        args.region, 
+        region, 
         args.snapshot_retention, 
         args.change_rate, 
         args.utilization

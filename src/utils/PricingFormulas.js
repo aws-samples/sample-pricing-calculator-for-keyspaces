@@ -425,6 +425,7 @@ export const buildKeyspacesEstimateInput = (formData, selectedRegion, multiSelec
     regionNames.forEach(regionName => {
         regions[regionName] = regionName;
         const d = formData[regionName] || formData.default || {};
+        const storageGb = Number(d.storageSizeInGb) || 0;
         estimateResults[regionName] = {
             default: {
                 reads_per_second: Number(d.averageReadRequestsPerSecond) || 0,
@@ -432,7 +433,9 @@ export const buildKeyspacesEstimateInput = (formData, selectedRegion, multiSelec
                 avg_read_row_size_bytes: Number(d.averageRowSizeInBytes) || 1024,
                 avg_write_row_size_bytes: Number(d.averageRowSizeInBytes) || 1024,
                 ttls_per_second: Number(d.averageTtlDeletesPerSecond) || 0,
-                uncompressed_single_replica_gb: Number(d.storageSizeInGb) || 0,
+                uncompressed_single_replica_gb: storageGb,
+                total_live_space_gb: storageGb,
+                replication_factor: 3,
                 use_backup: !!d.pointInTimeRecoveryForBackups
             }
         };

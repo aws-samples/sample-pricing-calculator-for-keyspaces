@@ -9,6 +9,7 @@ import {
     calculatePricingEstimate,
     mapPricingEstimateToKeyspacesTable
 } from './utils/PricingFormulas';
+import CreatePDFReport from './components/CreatePDFReport';
 import './App.css';
 
 import {
@@ -342,6 +343,18 @@ function App() {
         if (e) e.preventDefault();
     };
 
+    const handleKeyspacesGenerateReport = () => {
+        const { datacenters, regions, estimateResults } = buildKeyspacesEstimateInput(
+            formData,
+            selectedRegion,
+            multiSelectedRegions
+        );
+        if (datacenters.length === 0) return;
+        const pricing = calculatePricingEstimate(datacenters, regions, estimateResults);
+        const pdfReport = new CreatePDFReport();
+        pdfReport.createReport(datacenters, regions, estimateResults, pricing, null);
+    };
+
     return (
         <AppLayout
             navigation={<Navigation />}
@@ -381,6 +394,7 @@ function App() {
                                                             formData={formData}
                                                             selectedRegion={selectedRegion}
                                                             multiSelectedRegions={multiSelectedRegions}
+                                                            onGenerateReport={handleKeyspacesGenerateReport}
                                                         />
                                                         <Box>
                                                             <strong>Assumptions:</strong>
