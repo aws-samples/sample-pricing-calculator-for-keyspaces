@@ -113,8 +113,6 @@ function normalizeUsageType(usagetype) {
      savingsPlansDataMap[longRegionName] = regionSavingsPlans;
     }
 
-    console.log(JSON.stringify(savingsPlansDataMap));
-
     return savingsPlansDataMap;
   }
   

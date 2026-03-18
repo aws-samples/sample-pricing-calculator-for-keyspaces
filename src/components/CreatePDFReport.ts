@@ -1,9 +1,16 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { UserOptions, Table } from 'jspdf-autotable';
 import intuitLogo from '../data/logo-intuit.png';
 
-// Function to format currency with commas and proper rounding
-const formatCurrency = (amount) => {
+declare module 'jspdf' {
+    interface jsPDF {
+        autoTable(options: UserOptions): void;
+        lastAutoTable: Table;
+    }
+}
+
+const formatCurrency = (amount: number): string => {
     if (amount < 0.01) {
         return `$${Math.ceil(amount * 100) / 100}`;
     }
@@ -13,39 +20,136 @@ const formatCurrency = (amount) => {
     return `$${Math.ceil(amount).toLocaleString()}`;
 };
 
-class CreatePDFReport {
-    constructor() {
-        this.doc = null;
-        this.yPosition = 20;
-        this.xPosition = 20;
-    }
+// --- Input types ---
 
-    createReport(datacenters, regions, estimateResults, pricing, tcoData) {
-        console.log('tcoData', tcoData);
+interface Datacenter {
+    name: string;
+    nodeCount: number;
+}
+
+interface KeyspaceEstimate {
+    writes_per_second: number;
+    reads_per_second: number;
+    avg_read_row_size_bytes: number;
+    avg_write_row_size_bytes: number;
+    total_live_space_gb: number;
+    uncompressed_single_replica_gb: number;
+    ttls_per_second: number;
+    replication_factor: number;
+}
+
+type EstimateResults = Record<string, Record<string, KeyspaceEstimate>>;
+type Regions = Record<string, string>;
+
+interface KeyspaceCost {
+    name: string;
+    storage: number;
+    backup: number;
+    reads_provisioned: number;
+    writes_provisioned: number;
+    reads_on_demand: number;
+    writes_on_demand: number;
+    ttlDeletes: number;
+    provisioned_total: number;
+    on_demand_total: number;
+}
+
+interface DatacenterCost {
+    region: string;
+    keyspaceCosts: Record<string, KeyspaceCost>;
+}
+
+interface Pricing {
+    total_monthly_provisioned_cost: number;
+    total_monthly_on_demand_cost: number;
+    total_monthly_provisioned_cost_savings: number;
+    total_monthly_on_demand_cost_savings: number;
+    total_datacenter_cost: Record<string, DatacenterCost>;
+}
+
+interface TcoSingleNode {
+    instance?: { monthly_cost: number };
+    storage?: { monthly_cost: number };
+    backup?: { monthly_cost: number };
+    network_out?: { monthly_cost: number };
+    network_in?: { monthly_cost: number };
+    license?: { monthly_cost: number };
+}
+
+interface TcoEntry {
+    single_node: TcoSingleNode;
+    operations?: { operator_hours?: { monthly_cost: number } };
+}
+
+type TcoData = Record<string, TcoEntry> | null;
+
+// --- Render option types ---
+
+interface RenderTextOptions {
+    contentFontSize?: number;
+    lineHeight?: number;
+    maxWidth?: number;
+    pageBreakThreshold?: number;
+    fontStyle?: string;
+    startX?: number;
+    startY?: number;
+}
+
+interface RenderTitleOptions {
+    titleFontSize?: number;
+    pageBreakThreshold?: number;
+    startX?: number;
+    startY?: number;
+    maxWidth?: number;
+    lineHeight?: number;
+}
+
+interface RenderImageOptions {
+    imageWidth?: number;
+    imageHeight?: number;
+    startX?: number;
+    startY?: number;
+}
+
+interface SectionOptions extends RenderTextOptions {
+    titleFontSize?: number;
+    imageUrl?: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    imageMargin?: number;
+    addPageAfter?: boolean;
+}
+
+class CreatePDFReport {
+    private doc!: jsPDF;
+    private yPosition: number = 20;
+    private xPosition: number = 20;
+
+    createReport(
+        datacenters: Datacenter[],
+        regions: Regions,
+        estimateResults: EstimateResults,
+        pricing: Pricing,
+        tcoData: TcoData
+    ): void {
         this.doc = new jsPDF();
         this.yPosition = 20;
         this.xPosition = 20;
 
         this.addTitle();
-        //this.addDate();
         this.addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData);
         this.addIntroduction();
         this.customerQuote();
-        //this.doc.addPage();
         this.addCostSummary(pricing);
         this.addResultsTables(datacenters, regions, estimateResults);
-       
         this.addPricingTables(pricing);
-       
         this.addAssumptions();
-
         this.addCassandraTCOSection(datacenters, tcoData);
 
-        // Save the PDF
         this.doc.save('keyspaces-pricing-estimate.pdf');
     }
 
-    addTitle() {
+    private addTitle(): void {
         this.doc.setFontSize(20);
         this.doc.setFont('helvetica', 'bold');
         this.doc.text('Amazon Keyspaces (for Apache Cassandra)', this.xPosition, this.yPosition);
@@ -54,17 +158,22 @@ class CreatePDFReport {
         this.yPosition += 20;
     }
 
-    addDate() {
+    private addDate(): void {
         this.doc.setFontSize(12);
         this.doc.setFont('helvetica', 'normal');
         this.doc.text(`Generated on: ${new Date().toLocaleDateString()}`, this.xPosition, this.yPosition);
         this.yPosition += 15;
     }
 
-    addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData) {
+    private addExecutiveSummary(
+        datacenters: Datacenter[],
+        regions: Regions,
+        estimateResults: EstimateResults,
+        pricing: Pricing,
+        tcoData: TcoData
+    ): void {
         if (!pricing) return;
 
-        // Calculate summary statistics
         const totalKeyspaces = datacenters.reduce((total, dc) => {
             const results = estimateResults[dc.name];
             return total + (results ? Object.keys(results).length : 0);
@@ -73,32 +182,30 @@ class CreatePDFReport {
         const totalStorageGB = datacenters.reduce((total, dc) => {
             const results = estimateResults[dc.name];
             if (!results) return total;
-            return total + Object.values(results).reduce((dcTotal, data) => 
+            return total + Object.values(results).reduce((dcTotal, data) =>
                 dcTotal + data.uncompressed_single_replica_gb, 0);
         }, 0);
 
         const totalWritesPerSecond = datacenters.reduce((total, dc) => {
             const results = estimateResults[dc.name];
             if (!results) return total;
-            return total + Object.values(results).reduce((dcTotal, data) => 
+            return total + Object.values(results).reduce((dcTotal, data) =>
                 dcTotal + data.writes_per_second, 0);
         }, 0);
 
         const totalReadsPerSecond = datacenters.reduce((total, dc) => {
             const results = estimateResults[dc.name];
             if (!results) return total;
-            return total + Object.values(results).reduce((dcTotal, data) => 
+            return total + Object.values(results).reduce((dcTotal, data) =>
                 dcTotal + data.reads_per_second, 0);
         }, 0);
 
-        // Calculate total Cassandra TCO if available
         let totalCassandraTCO = 0;
         let instanceCost = 0;
         let storageCost = 0;
         let backupCost = 0;
         let networkCost = 0;
         let operationsCost = 0;
-        let perNodeCost = 0;
         let totalNodeCost = 0;
         let licenseCost = 0;
         if (tcoData) {
@@ -106,48 +213,44 @@ class CreatePDFReport {
                 const tco = tcoData[dc.name];
                 if (!tco) return;
 
-                 instanceCost +=  (tco.single_node?.instance?.monthly_cost || 0) * dc.nodeCount;
-                 storageCost += (tco.single_node?.storage?.monthly_cost || 0) * dc.nodeCount;
-                 backupCost += (tco.single_node?.backup?.monthly_cost || 0) * dc.nodeCount;
-                 const networkOutCost = (tco.single_node?.network_out?.monthly_cost || 0);
-                 const networkInCost = (tco.single_node?.network_in?.monthly_cost || 0);
-                 networkCost += (networkOutCost + networkInCost) * dc.nodeCount;
-                 licenseCost += (tco.single_node?.license?.monthly_cost || 0) * dc.nodeCount;
+                instanceCost += (tco.single_node?.instance?.monthly_cost || 0) * dc.nodeCount;
+                storageCost += (tco.single_node?.storage?.monthly_cost || 0) * dc.nodeCount;
+                backupCost += (tco.single_node?.backup?.monthly_cost || 0) * dc.nodeCount;
+                const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
+                const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
+                networkCost += (networkOutCost + networkInCost) * dc.nodeCount;
+                licenseCost += (tco.single_node?.license?.monthly_cost || 0) * dc.nodeCount;
 
-                 perNodeCost = instanceCost + storageCost + backupCost + networkCost;
-                 totalNodeCost += perNodeCost
-                 operationsCost += tco.operations?.operator_hours?.monthly_cost ||  0;
-
-                
+                const perNodeCost = instanceCost + storageCost + backupCost + networkCost;
+                totalNodeCost += perNodeCost;
+                operationsCost += tco.operations?.operator_hours?.monthly_cost || 0;
             });
         }
         totalCassandraTCO = totalNodeCost + operationsCost;
 
+        const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).`;
 
-        const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).`
-
-          this.addSection("Executive Summary", summaryContent, {
+        this.addSection("Executive Summary", summaryContent, {
             addPageAfter: false
         });
 
         this.yPosition += 5;
 
-        const keyDtails = 
-        `        • Total Datacenters: ${datacenters.length}
+        const keyDetails =
+            `        • Total Datacenters: ${datacenters.length}
         • Total Keyspaces: ${totalKeyspaces}
         • Total Live Storage: ${Math.round(totalStorageGB)} GB
         • Total Write Operations: ${Math.round(totalWritesPerSecond)} per second
-        • Total Read Operations: ${Math.round(totalReadsPerSecond)} per second`
+        • Total Read Operations: ${Math.round(totalReadsPerSecond)} per second`;
 
-        this.addSubSection("Cassandra cluster:", keyDtails, {
+        this.addSubSection("Cassandra cluster:", keyDetails, {
             addPageAfter: false
         });
 
         this.yPosition += 5;
 
-        
-        var infrastructureContent = 
-        `        • Instance Cost: ${formatCurrency(instanceCost || 0)}
+        let infrastructureContent =
+            `        • Instance Cost: ${formatCurrency(instanceCost || 0)}
         • Storage Cost: ${formatCurrency(storageCost || 0)}
         • Backup Cost: ${formatCurrency(backupCost || 0)}
         • Network Cost: ${formatCurrency(networkCost || 0)}
@@ -158,7 +261,7 @@ class CreatePDFReport {
         • Total Annual Cost: ${formatCurrency(totalCassandraTCO * 12)}`;
 
         if (totalCassandraTCO === 0) {
-            infrastructureContent = `TCO data was not provided. Check file and upload section to add the total cost of ownership details.` 
+            infrastructureContent = `TCO data was not provided. Check file and upload section to add the total cost of ownership details.`;
         }
 
         this.addSubSection("Self-managed Cassandra cost estimate:", infrastructureContent, {
@@ -167,8 +270,8 @@ class CreatePDFReport {
 
         this.yPosition += 5;
 
-        const keyspacesPricingContent = 
-        `        • Monthly Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)} / Savings Plan: ${formatCurrency(pricing.total_monthly_provisioned_cost_savings)}
+        const keyspacesPricingContent =
+            `        • Monthly Provisioned Capacity: ${formatCurrency(pricing.total_monthly_provisioned_cost)} / Savings Plan: ${formatCurrency(pricing.total_monthly_provisioned_cost_savings)}
         • Annual Provisioned Cost: ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)} / Savings Plan: ${formatCurrency(pricing.total_monthly_provisioned_cost_savings * 12)}
         -----------------------------------------------------------
         • Monthly On-Demand Capacity: ${formatCurrency(pricing.total_monthly_on_demand_cost)} / Savings Plan: ${formatCurrency(pricing.total_monthly_on_demand_cost_savings)}
@@ -184,8 +287,8 @@ class CreatePDFReport {
         });
     }
 
-    addIntroduction() {
-        const content = 
+    private addIntroduction(): void {
+        const content =
 `Amazon Keyspaces (for Apache Cassandra) is a serverless, fully managed database service that enables you to run Cassandra workloads at scale on AWS without refactoring your applications.
 
 Many customers face challenges operating and scaling self-managed Cassandra clusters — including the complexity of managing infrastructure, tuning performance, handling repairs and upgrades, and meeting demanding availability and compliance requirements.
@@ -203,11 +306,11 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.yPosition += 10;
     }
 
-    customerQuote(){
+    private customerQuote(): void {
         const content = `"In our prior state, if we had to scale out our cluster for more capacity, we would need a lead time of a few weeks. Now, using Amazon Keyspaces, we can accomplish this in 1 day."
         
         - Manoj Mohan, Software Engineer Leader, Intuit`;
-        
+
         this.addSection("Intuit Zero downtime migration to Amazon Keyspaces", content, {
             imageUrl: intuitLogo,
             imageWidth: 66,
@@ -217,42 +320,32 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         });
     }
 
-    addCostSummary(pricing) {
+    private addCostSummary(pricing: Pricing): void {
         if (!pricing) return;
 
-        const cost_summary = 'The following section outlines the estimation process for Amazon Keyspaces. It begins by detailing the inputs used to generate the estimate, followed by the output of the Keyspaces cost estimate.'
+        const cost_summary = 'The following section outlines the estimation process for Amazon Keyspaces. It begins by detailing the inputs used to generate the estimate, followed by the output of the Keyspaces cost estimate.';
         this.addSection("Estimate summary", cost_summary, {
             addPageAfter: false
         });
-        
+
         this.yPosition += 10;
-        //this.doc.setFontSize(12);
-        //this.doc.setFont('helvetica', 'normal');
-        //this.doc.text(`Total monthly estimate (Provisioned): ${formatCurrency(pricing.total_monthly_provisioned_cost)}, Total yearly estimate (Provisioned):  ${formatCurrency(pricing.total_monthly_provisioned_cost * 12)}`, this.xPosition, this.yPosition);
-        //this.yPosition += 8;
-        //this.doc.text(`Total monthly estimate (On-Demand): ${formatCurrency(pricing.total_monthly_on_demand_cost)}, Total yearly estimate (On-Demand):  ${formatCurrency(pricing.total_monthly_on_demand_cost * 12)}`, this.xPosition, this.yPosition);
-        //this.yPosition += 15;
     }
 
-    addResultsTables(datacenters, regions, estimateResults) {
+    private addResultsTables(datacenters: Datacenter[], regions: Regions, estimateResults: EstimateResults): void {
         datacenters.forEach((datacenter) => {
             const results = estimateResults[datacenter.name];
             if (!results) return;
-            
-            // Check if we need a new page
+
             if (this.yPosition > 250) {
                 this.doc.addPage();
                 this.yPosition = 20;
             }
-            
 
-            const dc_summary = 'The following table provides input gathered from the user interface about your existing workload.'
+            const dc_summary = 'The following table provides input gathered from the user interface about your existing workload.';
             this.addSection(`Input details - DC:${datacenter.name} to AWS Region:${regions[datacenter.name] || 'Unknown Region'} `, dc_summary, {
                 addPageAfter: false
             });
 
-           
-            // Prepare table data
             const tableData = Object.entries(results).map(([keyspace, data]) => [
                 keyspace,
                 Math.round(data.writes_per_second).toString(),
@@ -263,8 +356,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 Math.round(data.ttls_per_second).toString(),
                 data.replication_factor.toString()
             ]);
-            
-            // Add table
+
             this.doc.autoTable({
                 startY: this.yPosition,
                 head: [['Keyspace', 'Writes per/sec', 'Read per/sec', 'Avg Row Size (bytes)', 'Live Space (GB)', 'Uncompressed (GB)', 'TTL per/sec', 'Replication factor']],
@@ -283,30 +375,26 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                     7: { cellWidth: 20 }
                 }
             });
-            
-            this.yPosition = this.doc.lastAutoTable.finalY + 15;
+
+            this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 15;
         });
     }
 
-    addPricingTables(pricing) {
+    private addPricingTables(pricing: Pricing): void {
         if (!pricing) return;
 
         Object.entries(pricing.total_datacenter_cost).forEach(([datacenter, data]) => {
-            // Check if we need a new page
             if (this.yPosition > 250) {
                 this.doc.addPage();
                 this.yPosition = 20;
             }
-            
-            // Datacenter pricing header
-            
-            const dc_summary = 'The following table provides Keyspaces estimate based on the inputs provided.'
+
+            const dc_summary = 'The following table provides Keyspaces estimate based on the inputs provided.';
             this.addSection(`Keyspaces estimate - DC:${datacenter} to AWS Region:${data.region}`, dc_summary, {
                 addPageAfter: false
             });
 
-            // Prepare pricing table data
-            const pricingTableData = Object.entries(data.keyspaceCosts).map(([keyspace, costs]) => [
+            const pricingTableData = Object.entries(data.keyspaceCosts).map(([, costs]) => [
                 costs.name,
                 formatCurrency(costs.storage),
                 formatCurrency(costs.backup),
@@ -318,11 +406,9 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 formatCurrency(costs.provisioned_total),
                 formatCurrency(costs.on_demand_total)
             ]);
-            
-            // Add pricing table
+
             this.doc.autoTable({
                 startY: this.yPosition,
-                startX: this.xPosition-10,
                 head: [['Keyspace', 'Storage', 'Backup', 'Prov Reads', 'Prov Writes', 'OnDemand Reads', 'OnDemand Writes', 'TTL Deletes', 'Provisioned Total', 'OnDemand Total']],
                 body: pricingTableData,
                 theme: 'grid',
@@ -341,15 +427,14 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                     9: { cellWidth: 18 }
                 }
             });
-            
-            this.yPosition = this.doc.lastAutoTable.finalY + 15;
+
+            this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 15;
         });
     }
 
-    addCassandraTCOSection(datacenters, tcoData) {
+    private addCassandraTCOSection(datacenters: Datacenter[], tcoData: TcoData): void {
         if (!tcoData || !datacenters || datacenters.length === 0) return;
 
-        // Check if we need a new page
         if (this.yPosition > 200) {
             this.doc.addPage();
             this.yPosition = 20;
@@ -357,38 +442,28 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
         const sectionTitle = 'Cassandra TCO (Total Cost of Ownership)';
         const sectionDescription = 'The following table shows the current Cassandra infrastructure costs per datacenter. Costs are calculated per node and multiplied by the total number of nodes in each datacenter.';
-        
+
         this.addSection(sectionTitle, sectionDescription, {
             addPageAfter: false
         });
 
-        // Prepare TCO table data
-        const tcoTableData = [];
+        const tcoTableData: string[][] = [];
         let totalTCO = 0;
 
         datacenters.forEach(dc => {
             const tco = tcoData[dc.name];
             if (!tco) return;
 
-            // Calculate per-node costs
-            const instanceCost =  tco.single_node?.instance?.monthly_cost || 0;
+            const instanceCost = tco.single_node?.instance?.monthly_cost || 0;
             const storageCost = tco.single_node?.storage?.monthly_cost || 0;
-            const backupCost =  tco.single_node?.backup?.monthly_cost || 0;
+            const backupCost = tco.single_node?.backup?.monthly_cost || 0;
             const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
             const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
             const networkCost = networkOutCost + networkInCost;
             const licenseCost = tco.single_node?.license?.monthly_cost || 0;
-
-            // Total per-node cost
             const perNodeCost = instanceCost + storageCost + backupCost + networkCost + licenseCost;
-
-            // Total node cost for datacenter (per node * number of nodes)
             const totalNodeCost = perNodeCost * dc.nodeCount;
-
-            // Operations cost (already total, not per node)
             const operationsCost = tco.operations?.operator_hours?.monthly_cost || 0;
-
-            // Total TCO for this datacenter
             const datacenterTCO = totalNodeCost + operationsCost;
             totalTCO += datacenterTCO;
 
@@ -409,10 +484,8 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
         if (tcoTableData.length === 0) return;
 
-        // Add TCO table
         this.doc.autoTable({
             startY: this.yPosition,
-            startX: this.xPosition - 10,
             head: [['Datacenter', 'Nodes', 'Instance/Node', 'Storage/Node', 'Backup/Node', 'Network/Node', 'License/Node', 'Per Node Total', 'Node Total (All Nodes)', 'Operations', 'Datacenter TCO']],
             body: tcoTableData,
             theme: 'grid',
@@ -432,9 +505,8 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             }
         });
 
-        this.yPosition = this.doc.lastAutoTable.finalY + 15;
+        this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 15;
 
-        // Add total TCO summary
         if (this.yPosition > 250) {
             this.doc.addPage();
             this.yPosition = 20;
@@ -446,18 +518,17 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.yPosition += 15;
     }
 
-    addAssumptions() {
-        // Assumptions section
+    private addAssumptions(): void {
         if (this.yPosition > 250) {
             this.doc.addPage();
             this.yPosition = 20;
         }
-        
+
         this.doc.setFontSize(14);
         this.doc.setFont('helvetica', 'bold');
         this.doc.text('Assumptions', this.xPosition, this.yPosition);
         this.yPosition += 10;
-        
+
         this.doc.setFontSize(10);
         this.doc.setFont('helvetica', 'normal');
         this.doc.text('• Provisioned estimate includes 70% target utilization for auto-scaling', 20, this.yPosition);
@@ -468,20 +539,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.yPosition += 16;
     }
 
-    /**
-     * Core method to render text content with common logic
-     * @param {string} content - The text content to add
-     * @param {Object} options - Configuration options
-     * @param {number} options.contentFontSize - Font size for content (default: 12)
-     * @param {number} options.lineHeight - Height between lines (default: 7)
-     * @param {number} options.maxWidth - Maximum width for text wrapping (default: 180)
-     * @param {number} options.pageBreakThreshold - Y position threshold for page break (default: 280)
-     * @param {string} options.fontStyle - Font style: 'normal', 'bold', 'italic' (default: 'normal')
-     * @param {number} options.startX - Starting X position (default: this.xPosition)
-     * @param {number} options.startY - Starting Y position (default: this.yPosition)
-     * @returns {number} The final Y position after rendering
-     */
-    _renderTextContent(content, options = {}) {
+    private _renderTextContent(content: string, options: RenderTextOptions = {}): number {
         const {
             contentFontSize = 12,
             lineHeight = 7,
@@ -494,21 +552,16 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
         let currentY = startY;
 
-        // Set font for content
         this.doc.setFontSize(contentFontSize);
         this.doc.setFont('helvetica', fontStyle);
 
-        // Split content into lines that fit within maxWidth
-        const lines = this.doc.splitTextToSize(content, maxWidth);
+        const lines: string[] = this.doc.splitTextToSize(content, maxWidth);
 
-        // Write each line
         lines.forEach(line => {
-            // Check for page break
             if (currentY > pageBreakThreshold) {
                 this.doc.addPage();
                 currentY = 20;
             }
-            
             this.doc.text(line, startX, currentY);
             currentY += lineHeight;
         });
@@ -516,19 +569,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         return currentY;
     }
 
-    /**
-     * Core method to render a title
-     * @param {string} title - The title text
-     * @param {Object} options - Configuration options
-     * @param {number} options.titleFontSize - Font size for title (default: 16)
-     * @param {number} options.pageBreakThreshold - Y position threshold for page break (default: 280)
-     * @param {number} options.startX - Starting X position (default: this.xPosition)
-     * @param {number} options.startY - Starting Y position (default: this.yPosition)
-     * @param {number} options.maxWidth - Maximum width for title wrapping (default: 180)
-     * @param {number} options.lineHeight - Height between title lines (default: 8)
-     * @returns {number} The final Y position after rendering
-     */
-    _renderTitle(title, options = {}) {
+    private _renderTitle(title: string, options: RenderTitleOptions = {}): number {
         const {
             titleFontSize = 16,
             pageBreakThreshold = 280,
@@ -540,7 +581,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
         let currentY = startY;
 
-        // Check if we need a new page
         if (currentY > pageBreakThreshold - 50) {
             this.doc.addPage();
             currentY = 20;
@@ -548,11 +588,9 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
         this.doc.setFontSize(titleFontSize);
         this.doc.setFont('helvetica', 'bold');
-        
-        // Split title into lines that fit within maxWidth
-        const lines = this.doc.splitTextToSize(title, maxWidth);
-        
-        // Write each line
+
+        const lines: string[] = this.doc.splitTextToSize(title, maxWidth);
+
         lines.forEach(line => {
             this.doc.text(line, startX, currentY);
             currentY += lineHeight;
@@ -561,17 +599,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         return currentY;
     }
 
-    /**
-     * Core method to add an image
-     * @param {string} imageUrl - URL or base64 string of the image
-     * @param {Object} options - Configuration options
-     * @param {number} options.imageWidth - Width of the image in mm (default: 60)
-     * @param {number} options.imageHeight - Height of the image in mm (default: 40)
-     * @param {number} options.startX - Starting X position (default: this.xPosition)
-     * @param {number} options.startY - Starting Y position (default: this.yPosition)
-     * @returns {number} The final Y position after rendering
-     */
-    _renderImage(imageUrl, options = {}) {
+    private _renderImage(imageUrl: string, options: RenderImageOptions = {}): number {
         const {
             imageWidth = 60,
             imageHeight = 40,
@@ -580,7 +608,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         } = options;
 
         try {
-            // Determine image format from URL or use default
             let imageFormat = 'JPEG';
             if (imageUrl.toLowerCase().includes('.png')) {
                 imageFormat = 'PNG';
@@ -589,110 +616,88 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             } else if (imageUrl.toLowerCase().includes('.webp')) {
                 imageFormat = 'WEBP';
             }
-            
+
             this.doc.addImage(imageUrl, imageFormat, startX, startY, imageWidth, imageHeight);
         } catch (error) {
             console.warn('Failed to add image:', error);
-            // If image fails, just add a placeholder rectangle
             this.doc.rect(startX, startY, imageWidth, imageHeight);
-            this.doc.text('Image', startX + imageWidth/2 - 10, startY + imageHeight/2);
+            this.doc.text('Image', startX + imageWidth / 2 - 10, startY + imageHeight / 2);
         }
 
         return startY + imageHeight;
     }
 
-    /**
-     * Generic function to add text content to the PDF document
-     * @param {string} content - The text content to add
-     * @param {Object} options - Configuration options
-     * @param {string} options.title - Optional title for the section
-     * @param {number} options.titleFontSize - Font size for title (default: 16)
-     * @param {number} options.contentFontSize - Font size for content (default: 12)
-     * @param {number} options.lineHeight - Height between lines (default: 7)
-     * @param {number} options.maxWidth - Maximum width for text wrapping (default: 180)
-     * @param {number} options.pageBreakThreshold - Y position threshold for page break (default: 280)
-     * @param {boolean} options.addPageAfter - Whether to add a new page after content (default: false)
-     * @param {string} options.fontStyle - Font style: 'normal', 'bold', 'italic' (default: 'normal')
-     */
-    addTextContent(content, options = {}) {
+    addTextContent(content: string, options: SectionOptions & { title?: string } = {}): void {
         const {
             title,
             addPageAfter = false,
+            titleFontSize,
+            imageUrl: _imageUrl,
+            imageWidth: _imageWidth,
+            imageHeight: _imageHeight,
+            imageMargin: _imageMargin,
             ...renderOptions
         } = options;
 
         let currentY = this.yPosition;
 
-        // Add title if provided
         if (title) {
             currentY = this._renderTitle(title, {
-                titleFontSize: renderOptions.titleFontSize || 16,
+                titleFontSize: titleFontSize || 16,
                 pageBreakThreshold: renderOptions.pageBreakThreshold || 280,
                 startY: currentY
             });
         }
 
-        // Render content
         currentY = this._renderTextContent(content, {
             ...renderOptions,
             startY: currentY
         });
 
-        // Update global position
         this.yPosition = currentY;
 
-        // Add page after content if requested
-        if (addPageAfter) {
-            this.doc.addPage();
-            this.yPosition = 20;
-        }
-    }
-    addSubsectionTextContent(content, options = {}) {
-        const {
-            title,
-            addPageAfter = false,
-            ...renderOptions
-        } = options;
-
-        let currentY = this.yPosition;
-
-        // Add title if provided
-        if (title) {
-            currentY = this._renderTitle(title, {
-                titleFontSize: renderOptions.titleFontSize || 12,
-                pageBreakThreshold: renderOptions.pageBreakThreshold || 280,
-                startY: currentY
-            });
-        }
-
-        // Render content
-        currentY = this._renderTextContent(content, {
-            ...renderOptions,
-            startY: currentY
-        });
-
-        // Update global position
-        this.yPosition = currentY;
-
-        // Add page after content if requested
         if (addPageAfter) {
             this.doc.addPage();
             this.yPosition = 20;
         }
     }
 
-    /**
-     * Add a section with title and content, optionally with an image
-     * @param {string} title - Section title
-     * @param {string} content - Section content
-     * @param {Object} options - Additional options
-     * @param {string} options.imageUrl - Optional URL or base64 string of the image
-     * @param {number} options.imageWidth - Width of the image in mm (default: 60)
-     * @param {number} options.imageHeight - Height of the image in mm (default: 40)
-     * @param {number} options.imageMargin - Margin between image and text in mm (default: 10)
-     * @param {boolean} options.addPageAfter - Whether to add a new page after content (default: false)
-     */
-    addSection(title, content, options = {}) {
+    private addSubsectionTextContent(content: string, options: SectionOptions & { title?: string } = {}): void {
+        const {
+            title,
+            addPageAfter = false,
+            titleFontSize: _titleFontSize,
+            imageUrl: _imageUrl,
+            imageWidth: _imageWidth,
+            imageHeight: _imageHeight,
+            imageMargin: _imageMargin,
+            ...renderOptions
+        } = options;
+
+        let currentY = this.yPosition;
+
+        if (title) {
+            currentY = this._renderTitle(title, {
+                titleFontSize: 12,
+                pageBreakThreshold: renderOptions.pageBreakThreshold || 280,
+                startY: currentY
+            });
+        }
+
+        currentY = this._renderTextContent(content, {
+            ...renderOptions,
+            startY: currentY
+        });
+
+        this.yPosition = currentY;
+
+        if (addPageAfter) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+    }
+
+    addSection(title: string, content: string, options: SectionOptions = {}): void {
         const {
             imageUrl,
             imageWidth = 60,
@@ -702,7 +707,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             ...textOptions
         } = options;
 
-        // If image is provided, create side-by-side layout
         if (imageUrl) {
             this.addSectionWithImage(content, imageUrl, {
                 imageWidth,
@@ -712,7 +716,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 ...textOptions
             });
         } else {
-            // Use the simplified text-only method
             this.addTextContent(content, {
                 title,
                 addPageAfter,
@@ -720,7 +723,8 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             });
         }
     }
-    addSubSection(title, content, options = {}) {
+
+    private addSubSection(title: string, content: string, options: SectionOptions = {}): void {
         const {
             imageUrl,
             imageWidth = 60,
@@ -730,7 +734,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             ...textOptions
         } = options;
 
-        // If image is provided, create side-by-side layout
         if (imageUrl) {
             this.addSectionWithImage(content, imageUrl, {
                 imageWidth,
@@ -740,7 +743,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 ...textOptions
             });
         } else {
-            // Use the simplified text-only method
             this.addSubsectionTextContent(content, {
                 title,
                 addPageAfter,
@@ -749,13 +751,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         }
     }
 
-    /**
-     * Add a section with image and text side by side
-     * @param {string} content - Section content
-     * @param {string} imageUrl - URL or base64 string of the image
-     * @param {Object} options - Configuration options
-     */
-    addSectionWithImage(content, imageUrl, options = {}) {
+    private addSectionWithImage(content: string, imageUrl: string, options: SectionOptions = {}): void {
         const {
             imageWidth = 60,
             imageHeight = 40,
@@ -766,18 +762,15 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             ...textOptions
         } = options;
 
-        // Calculate layout dimensions
         const textWidth = maxWidth - imageWidth - imageMargin;
         const imageX = this.xPosition;
         const textX = imageX + imageWidth + imageMargin;
 
-        // Check if we need a new page for the entire section
         if (this.yPosition + Math.max(imageHeight, 50) > pageBreakThreshold) {
             this.doc.addPage();
             this.yPosition = 20;
         }
 
-        // Add the image
         this._renderImage(imageUrl, {
             imageWidth,
             imageHeight,
@@ -785,7 +778,6 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             startY: this.yPosition
         });
 
-        // Add the text content with adjusted width
         const finalY = this._renderTextContent(content, {
             ...textOptions,
             maxWidth: textWidth,
@@ -793,22 +785,15 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             startY: this.yPosition
         });
 
-        // Update y position to the bottom of the section
         this.yPosition = Math.max(this.yPosition + imageHeight, finalY) + 10;
 
-        // Add page after content if requested
         if (addPageAfter) {
             this.doc.addPage();
             this.yPosition = 20;
         }
     }
 
-    /**
-     * Add a simple paragraph without title
-     * @param {string} content - Paragraph content
-     * @param {Object} options - Additional options
-     */
-    addParagraph(content, options = {}) {
+    addParagraph(content: string, options: SectionOptions = {}): void {
         this.addTextContent(content, {
             contentFontSize: 12,
             ...options
@@ -816,4 +801,4 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
     }
 }
 
-export default CreatePDFReport; 
+export default CreatePDFReport;
