@@ -3,3 +3,6 @@
 build/
 node_modules/
 .vscode/launch.json
+keyspaces-pricing-estimate.pdf
+keyspaces-pricing-estimate_skill.pdf
+keyspaces-pricing-estimate_ui.pdf
