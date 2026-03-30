@@ -251,7 +251,7 @@ export const buildCassandraLocalSet = (
           if (!dcTables[tableName]) {
             const fullyQualifiedTableName = `${keyspaceName}.${tableName}`;
             let hasTtl = false;
-            let averageBytes = 1;
+            let averageBytes = 1024;
             const rowEntry = rowSizeData?.[fullyQualifiedTableName];
             if (rowEntry) {
               const avgNumber = rowEntry.average ?? '1';
@@ -329,8 +329,10 @@ export const getKeyspaceCassandraAggregate = (
       keyspace_ttls_total += tableData.has_ttl ? tableData.writes_monthly / sc : 0;
     }
 
-    const average_read_row_size_bytes = read_row_size_bytes / (keyspace_reads_total > 0 ? keyspace_reads_total : 1);
-    const average_write_row_size_bytes = write_row_size_bytes / (keyspace_writes_total > 0 ? keyspace_writes_total : 1);
+    const total_ops = keyspace_reads_total + keyspace_writes_total;
+    const combined_row_size_bytes = (read_row_size_bytes + write_row_size_bytes) / (total_ops > 0 ? total_ops : 1);
+    const average_read_row_size_bytes = combined_row_size_bytes;
+    const average_write_row_size_bytes = combined_row_size_bytes;
     keyspace_aggregate[keyspace] = {
       keyspace_name: keyspace,
       keyspace_type: keyspaceData.type,
@@ -421,7 +423,7 @@ export const calculatePricingEstimate = (
       const provisionedReadCost = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing.readRequestPricePerHour, 0.70);
 
       const storageCost = calculateStorageCostPerMonth(data.uncompressed_single_replica_gb, regionPricing.storagePricePerGB);
-      const backupCost = (data.use_backup !== false)
+      const backupCost = data.use_backup === true
         ? calculateBackupCostPerMonth(data.uncompressed_single_replica_gb, regionPricing.pitrPricePerGB)
         : 0;
 
@@ -535,6 +537,49 @@ export const buildKeyspacesEstimateInput = (
   return { datacenters, regions, estimateResults };
 };
 
+export interface PricingTotals {
+  storage: number;
+  backup: number;
+  ttl_deletes: number;
+  reads_provisioned: number;
+  writes_provisioned: number;
+  reads_provisioned_savings: number;
+  writes_provisioned_savings: number;
+  reads_on_demand: number;
+  writes_on_demand: number;
+  reads_on_demand_savings: number;
+  writes_on_demand_savings: number;
+}
+
+/**
+ * Sum the pre-computed 'totals' row across all datacenters in a PricingEstimateResult.
+ */
+export const aggregatePricingTotals = (pricing: PricingEstimateResult): PricingTotals => {
+  const acc: PricingTotals = {
+    storage: 0, backup: 0, ttl_deletes: 0,
+    reads_provisioned: 0, writes_provisioned: 0,
+    reads_provisioned_savings: 0, writes_provisioned_savings: 0,
+    reads_on_demand: 0, writes_on_demand: 0,
+    reads_on_demand_savings: 0, writes_on_demand_savings: 0,
+  };
+  for (const dcCost of Object.values(pricing.total_datacenter_cost)) {
+    const t = dcCost.keyspaceCosts['totals'];
+    if (!t) continue;
+    acc.storage                   += t.storage;
+    acc.backup                    += t.backup;
+    acc.ttl_deletes               += t.ttlDeletes;
+    acc.reads_provisioned         += t.reads_provisioned;
+    acc.writes_provisioned        += t.writes_provisioned;
+    acc.reads_provisioned_savings += t.reads_provisioned_savings;
+    acc.writes_provisioned_savings += t.writes_provisioned_savings;
+    acc.reads_on_demand           += t.reads_on_demand;
+    acc.writes_on_demand          += t.writes_on_demand;
+    acc.reads_on_demand_savings   += t.reads_on_demand_savings;
+    acc.writes_on_demand_savings  += t.writes_on_demand_savings;
+  }
+  return acc;
+};
+
 /**
  * Map calculatePricingEstimate result to the Keyspaces PricingTable shape.
  */
@@ -544,33 +589,15 @@ export const mapPricingEstimateToKeyspacesTable = (
   if (!pricingResult?.total_datacenter_cost) {
     return { provisionedPricing: {} as ProvisionedPricing, onDemandPricing: {} as ProvisionedPricing };
   }
-  let totalStorage = 0;
-  let totalBackup = 0;
-  let totalTtl = 0;
-  let readsProvisioned = 0;
-  let writesProvisioned = 0;
-  let readsOnDemand = 0;
-  let writesOnDemand = 0;
-  let readsProvisionedSavings = 0;
-  let writesProvisionedSavings = 0;
-  let readsOnDemandSavings = 0;
-  let writesOnDemandSavings = 0;
 
-  Object.values(pricingResult.total_datacenter_cost).forEach((dc) => {
-    const totals = dc.keyspaceCosts?.totals;
-    if (!totals) return;
-    totalStorage += totals.storage || 0;
-    totalBackup += totals.backup || 0;
-    totalTtl += totals.ttlDeletes || 0;
-    readsProvisioned += totals.reads_provisioned || 0;
-    writesProvisioned += totals.writes_provisioned || 0;
-    readsOnDemand += totals.reads_on_demand || 0;
-    writesOnDemand += totals.writes_on_demand || 0;
-    readsProvisionedSavings += totals.reads_provisioned_savings || 0;
-    writesProvisionedSavings += totals.writes_provisioned_savings || 0;
-    readsOnDemandSavings += totals.reads_on_demand_savings || 0;
-    writesOnDemandSavings += totals.writes_on_demand_savings || 0;
-  });
+  const t = aggregatePricingTotals(pricingResult);
+  const {
+    storage: totalStorage, backup: totalBackup, ttl_deletes: totalTtl,
+    reads_provisioned: readsProvisioned, writes_provisioned: writesProvisioned,
+    reads_provisioned_savings: readsProvisionedSavings, writes_provisioned_savings: writesProvisionedSavings,
+    reads_on_demand: readsOnDemand, writes_on_demand: writesOnDemand,
+    reads_on_demand_savings: readsOnDemandSavings, writes_on_demand_savings: writesOnDemandSavings,
+  } = t;
 
   const provisionedPricing: ProvisionedPricing = {
     strongConsistencyReads: readsProvisioned,

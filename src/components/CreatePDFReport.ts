@@ -1,7 +1,18 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { UserOptions, Table } from 'jspdf-autotable';
-import intuitLogo from '../data/logo-intuit.png';
+
+// Logo is injected at construction time so this class works in both
+// browser (pass a webpack-resolved data URL) and Node.js (pass a
+// base64-encoded data URI loaded from the filesystem).
+let browserLogo: string | null = null;
+try {
+    // Dynamic require so ts-node (Node.js) never executes this import path.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    browserLogo = require('../data/logo-intuit.png');
+} catch {
+    // Running outside of webpack — caller must supply logoData explicitly.
+}
 
 declare module 'jspdf' {
     interface jsPDF {
@@ -121,9 +132,14 @@ interface SectionOptions extends RenderTextOptions {
 }
 
 class CreatePDFReport {
-    private doc!: jsPDF;
+    protected doc!: jsPDF;
     private yPosition: number = 20;
     private xPosition: number = 20;
+    protected readonly logoData: string | null;
+
+    constructor(logoData?: string | null) {
+        this.logoData = logoData !== undefined ? logoData : browserLogo;
+    }
 
     createReport(
         datacenters: Datacenter[],
@@ -146,6 +162,11 @@ class CreatePDFReport {
         this.addAssumptions();
         this.addCassandraTCOSection(datacenters, tcoData);
 
+        this._output();
+    }
+
+    /** Override in subclasses to change how the finished PDF is delivered. */
+    protected _output(): void {
         this.doc.save('keyspaces-pricing-estimate.pdf');
     }
 
@@ -312,10 +333,7 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         - Manoj Mohan, Software Engineer Leader, Intuit`;
 
         this.addSection("Intuit Zero downtime migration to Amazon Keyspaces", content, {
-            imageUrl: intuitLogo,
-            imageWidth: 66,
-            imageHeight: 25,
-            imageMargin: 15,
+            ...(this.logoData ? { imageUrl: this.logoData, imageWidth: 66, imageHeight: 25, imageMargin: 15 } : {}),
             addPageAfter: false
         });
     }

@@ -347,6 +347,81 @@ export const handleRowSizeFile = async (file: FileWithText | null): Promise<RowS
   }
 };
 
+// --- File type detection ---
+
+export type CassandraFileType = 'tablestats' | 'status' | 'info' | 'rowsize' | 'schema' | 'tco' | 'unknown';
+
+export interface CassandraFileScan {
+  tablestats: string[];   // filenames (multiple nodes allowed)
+  status: string | null;
+  info: string[];         // filenames (one per node)
+  rowsize: string | null;
+  schema: string | null;
+  tco: string | null;
+  unknown: string[];
+}
+
+export const isTablestatsFile = (content: string): boolean =>
+  /Keyspace\s*:/i.test(content) && /Space used \(live\)/i.test(content);
+
+export const isStatusFile = (content: string): boolean =>
+  /Datacenter\s*:/i.test(content) && /^(U|D)(N|L|J|M)\s+/m.test(content);
+
+export const isInfoFile = (content: string): boolean =>
+  /^ID\s*:/im.test(content) && /Uptime\s*\(seconds\)/i.test(content);
+
+export const isRowSizeFile = (content: string): boolean =>
+  /\w+\.\w+\s*=\s*\{/.test(content) && /average\s*:\s*\d+\s*bytes/i.test(content);
+
+export const isSchemaFile = (content: string): boolean =>
+  /CREATE\s+(KEYSPACE|TABLE)/i.test(content);
+
+export const isTcoFile = (content: string): boolean => {
+  try {
+    const obj = JSON.parse(content);
+    return !!(obj?.single_node && obj?.operations);
+  } catch {
+    return false;
+  }
+};
+
+export const detectFileType = (content: string): CassandraFileType => {
+  if (isTablestatsFile(content)) return 'tablestats';
+  if (isStatusFile(content)) return 'status';
+  if (isInfoFile(content)) return 'info';
+  if (isRowSizeFile(content)) return 'rowsize';
+  if (isSchemaFile(content)) return 'schema';
+  if (isTcoFile(content)) return 'tco';
+  return 'unknown';
+};
+
+// Classify a set of files (filename → content) into their respective roles.
+export const scanCassandraFiles = (files: Record<string, string>): CassandraFileScan => {
+  const result: CassandraFileScan = {
+    tablestats: [],
+    status: null,
+    info: [],
+    rowsize: null,
+    schema: null,
+    tco: null,
+    unknown: [],
+  };
+
+  for (const [name, content] of Object.entries(files)) {
+    switch (detectFileType(content)) {
+      case 'tablestats': result.tablestats.push(name); break;
+      case 'status':     result.status  ??= name; break;
+      case 'info':       result.info.push(name); break;
+      case 'rowsize':    result.rowsize ??= name; break;
+      case 'schema':     result.schema  ??= name; break;
+      case 'tco':        result.tco     ??= name; break;
+      default:           result.unknown.push(name); break;
+    }
+  }
+
+  return result;
+};
+
 export const parseTCOInfo = (data: string): TcoData => {
   let obj: TcoData;
   try {
