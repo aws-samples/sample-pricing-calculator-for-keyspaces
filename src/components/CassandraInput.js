@@ -11,7 +11,7 @@ import {
     Alert,
     Table
 } from '@cloudscape-design/components';
-import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parseRowSizeInfo, parseTCOInfo } from './ParsingHelpers';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parse_cassandra_schema_compatibility, parseRowSizeInfo, parseTCOInfo } from './ParsingHelpers';
 import { buildCassandraLocalSet, getKeyspaceCassandraAggregate } from '../utils/PricingFormulas';
 import CreatePDFReport from './CreatePDFReport';
 import { awsRegions } from '../constants/regions';
@@ -504,15 +504,46 @@ const ResultsTable = ({ results }) => {
     };
 
     // Export to PDF function
-    const exportToPDF = () => {
+    const exportToPDF = async () => {
         if (!allDatacentersHaveResults()) {
             alert('Please complete all estimations before generating the PDF report.');
             return;
         }
 
         const pricing = calculatePricingEstimate(datacenters, regions, estimateResults);
+
+        // Gather compatibility data from schema files
+        let compatibilityData = null;
+        try {
+            const mergedCompat = { functions: 0, aggregates: 0, keyspaces: {} };
+            for (const dc of datacenters) {
+                const files = datacenterFiles[dc.name];
+                const schemaFile = files?.schema;
+                if (schemaFile) {
+                    const content = await schemaFile.text();
+                    const compat = parse_cassandra_schema_compatibility(content);
+                    mergedCompat.functions += compat.functions;
+                    mergedCompat.aggregates += compat.aggregates;
+                    for (const [ks, tables] of Object.entries(compat.keyspaces)) {
+                        if (!mergedCompat.keyspaces[ks]) mergedCompat.keyspaces[ks] = {};
+                        for (const [table, issues] of Object.entries(tables)) {
+                            if (!mergedCompat.keyspaces[ks][table]) {
+                                mergedCompat.keyspaces[ks][table] = { indexes: [], triggers: [], materializedViews: [] };
+                            }
+                            mergedCompat.keyspaces[ks][table].indexes.push(...issues.indexes);
+                            mergedCompat.keyspaces[ks][table].triggers.push(...issues.triggers);
+                            mergedCompat.keyspaces[ks][table].materializedViews.push(...issues.materializedViews);
+                        }
+                    }
+                }
+            }
+            compatibilityData = mergedCompat;
+        } catch (error) {
+            console.warn('Could not parse compatibility data from schema files:', error);
+        }
+
         const pdfReport = new CreatePDFReport();
-        pdfReport.createReport(datacenters, regions, estimateResults, pricing, tcoData);
+        pdfReport.createReport(datacenters, regions, estimateResults, pricing, tcoData, compatibilityData);
     };
 
     // Calculate pricing estimate now imported from ../utils/PricingFormulas

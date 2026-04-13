@@ -94,6 +94,18 @@ interface TcoEntry {
 
 type TcoData = Record<string, TcoEntry> | null;
 
+interface TableCompatibilityIssue {
+    indexes: string[];
+    triggers: string[];
+    materializedViews: string[];
+}
+
+export interface CompatibilityData {
+    functions: number;
+    aggregates: number;
+    keyspaces: Record<string, Record<string, TableCompatibilityIssue>>;
+}
+
 // --- Render option types ---
 
 interface RenderTextOptions {
@@ -146,7 +158,8 @@ class CreatePDFReport {
         regions: Regions,
         estimateResults: EstimateResults,
         pricing: Pricing,
-        tcoData: TcoData
+        tcoData: TcoData,
+        compatibilityData?: CompatibilityData | null
     ): void {
         this.doc = new jsPDF();
         this.yPosition = 20;
@@ -161,6 +174,7 @@ class CreatePDFReport {
         this.addPricingTables(pricing);
         this.addAssumptions();
         this.addCassandraTCOSection(datacenters, tcoData);
+        this.addCompatibilitySection(compatibilityData ?? null);
 
         this._output();
     }
@@ -555,6 +569,111 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         this.yPosition += 8;
         this.doc.text('• Pricing uses Amazon Keyspaces rates for the selected regions', 20, this.yPosition);
         this.yPosition += 16;
+    }
+
+    private addCompatibilitySection(compatibilityData: CompatibilityData | null): void {
+        if (!compatibilityData) return;
+
+        const hasIssues =
+            compatibilityData.functions > 0 ||
+            compatibilityData.aggregates > 0 ||
+            Object.keys(compatibilityData.keyspaces).length > 0;
+
+        if (this.yPosition > 200) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        if (!hasIssues) {
+            const noIssuesDescription =
+                'Your Cassandra schema was analyzed for compatibility with Amazon Keyspaces. No unsupported features were detected. Your schema appears fully compatible with Amazon Keyspaces.';
+
+            this.addSection('Keyspaces Compatibility Analysis', noIssuesDescription, {
+                addPageAfter: false
+            });
+            return;
+        }
+
+        const sectionDescription =
+            'The following Cassandra features were detected in your schema that are not supported by Amazon Keyspaces. These will need to be addressed as part of the migration.';
+
+        this.addSection('Keyspaces Compatibility Issues', sectionDescription, {
+            addPageAfter: false
+        });
+
+        this.yPosition += 5;
+
+        // Keyspace-level issues: functions and aggregates
+        if (compatibilityData.functions > 0 || compatibilityData.aggregates > 0) {
+            const keyspaceLevelContent =
+                `        • User-Defined Functions (UDFs): ${compatibilityData.functions}
+        • User-Defined Aggregates (UDAs): ${compatibilityData.aggregates}
+
+        UDFs and UDAs are not supported in Amazon Keyspaces. Application logic that depends on server-side functions or aggregates must be moved to the client side.`;
+
+            this.addSubSection('Keyspace-level issues:', keyspaceLevelContent, {
+                addPageAfter: false
+            });
+
+            this.yPosition += 5;
+        }
+
+        // Table-level issues: indexes, triggers, materialized views
+        const tableRows: string[][] = [];
+        for (const [ks, tables] of Object.entries(compatibilityData.keyspaces)) {
+            for (const [table, issues] of Object.entries(tables)) {
+                const indexCount = issues.indexes.length;
+                const triggerCount = issues.triggers.length;
+                const mvCount = issues.materializedViews.length;
+
+                if (indexCount > 0 || triggerCount > 0 || mvCount > 0) {
+                    tableRows.push([
+                        `${ks}.${table}`,
+                        indexCount > 0 ? issues.indexes.join(', ') : '-',
+                        triggerCount > 0 ? issues.triggers.join(', ') : '-',
+                        mvCount > 0 ? issues.materializedViews.join(', ') : '-',
+                    ]);
+                }
+            }
+        }
+
+        if (tableRows.length > 0) {
+            if (this.yPosition > 250) {
+                this.doc.addPage();
+                this.yPosition = 20;
+            }
+
+            this.doc.setFontSize(12);
+            this.doc.setFont('helvetica', 'bold');
+            this.doc.text('Table-level issues:', this.xPosition, this.yPosition);
+            this.yPosition += 8;
+
+            this.doc.autoTable({
+                startY: this.yPosition,
+                head: [['Table', 'Secondary Indexes', 'Triggers', 'Materialized Views']],
+                body: tableRows,
+                theme: 'grid',
+                headStyles: { fillColor: [204, 51, 51] },
+                styles: { fontSize: 8 },
+                columnStyles: {
+                    0: { cellWidth: 45 },
+                    1: { cellWidth: 45 },
+                    2: { cellWidth: 45 },
+                    3: { cellWidth: 45 },
+                },
+            });
+
+            this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 10;
+
+            const tableLevelNote =
+                `        • Secondary Indexes: Amazon Keyspaces does not support secondary indexes. Consider restructuring queries or using separate tables.
+        • Triggers: Triggers are not supported. Use AWS Lambda with Amazon Keyspaces Streams or application-level logic instead.
+        • Materialized Views: Not supported. Create separate tables and manage denormalization in the application layer.`;
+
+            this.addSubSection('', tableLevelNote, { addPageAfter: false });
+
+            this.yPosition += 10;
+        }
     }
 
     private _renderTextContent(content: string, options: RenderTextOptions = {}): number {

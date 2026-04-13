@@ -27,6 +27,20 @@ export type SchemaInfo = Record<string, KeyspaceSchemaEntry>;
 export type RowSizeInfo = Record<string, Record<string, string>>;
 export type TablestatsResult = Record<string, Record<string, TablestatsData>>;
 
+// --- Compatibility types ---
+
+interface TableCompatibilityIssue {
+  indexes: string[];
+  triggers: string[];
+  materializedViews: string[];
+}
+
+export interface CompatibilityInfo {
+  functions: number;
+  aggregates: number;
+  keyspaces: Record<string, Record<string, TableCompatibilityIssue>>;
+}
+
 interface TcoSingleNode {
   instance: { monthly_cost: number; [key: string]: unknown };
   storage?: { monthly_cost: number; [key: string]: unknown };
@@ -245,6 +259,66 @@ export const parse_cassandra_schema = (schemaContent: string, datacenter: string
   }
 
   return ksInfo;
+};
+
+/**
+ * Scan a CQL schema dump for features unsupported by Amazon Keyspaces:
+ *   - CREATE INDEX        → table-level
+ *   - CREATE TRIGGER      → table-level
+ *   - CREATE MATERIALIZED VIEW → table-level (attached to the base table)
+ *   - CREATE FUNCTION     → keyspace-level (counted globally)
+ *   - CREATE AGGREGATE    → keyspace-level (counted globally)
+ */
+export const parse_cassandra_schema_compatibility = (schemaContent: string): CompatibilityInfo => {
+  const result: CompatibilityInfo = {
+    functions: 0,
+    aggregates: 0,
+    keyspaces: {},
+  };
+
+  const ensureTable = (ks: string, table: string): TableCompatibilityIssue => {
+    if (!result.keyspaces[ks]) result.keyspaces[ks] = {};
+    if (!result.keyspaces[ks][table]) {
+      result.keyspaces[ks][table] = { indexes: [], triggers: [], materializedViews: [] };
+    }
+    return result.keyspaces[ks][table];
+  };
+
+  // CREATE [CUSTOM] INDEX [IF NOT EXISTS] <name> ON <ks>.<table> ...
+  const indexPattern = /CREATE\s+(?:CUSTOM\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(\w+)\.(\w+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = indexPattern.exec(schemaContent)) !== null) {
+    const [, indexName, ks, table] = m;
+    ensureTable(ks, table).indexes.push(indexName);
+  }
+
+  // CREATE TRIGGER [IF NOT EXISTS] <name> ON <ks>.<table> ...
+  const triggerPattern = /CREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(\w+)\.(\w+)/gi;
+  while ((m = triggerPattern.exec(schemaContent)) !== null) {
+    const [, triggerName, ks, table] = m;
+    ensureTable(ks, table).triggers.push(triggerName);
+  }
+
+  // CREATE MATERIALIZED VIEW [IF NOT EXISTS] <ks>.<view> AS SELECT ... FROM <ks>.<base_table>
+  const mvPattern = /CREATE\s+MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)\s+AS\s+SELECT\s+[\s\S]*?\s+FROM\s+(\w+)\.(\w+)/gi;
+  while ((m = mvPattern.exec(schemaContent)) !== null) {
+    const [, , viewName, baseKs, baseTable] = m;
+    ensureTable(baseKs, baseTable).materializedViews.push(viewName);
+  }
+
+  // CREATE [OR REPLACE] FUNCTION [IF NOT EXISTS] <ks>.<name> ...
+  const functionPattern = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)/gi;
+  while ((m = functionPattern.exec(schemaContent)) !== null) {
+    result.functions++;
+  }
+
+  // CREATE [OR REPLACE] AGGREGATE [IF NOT EXISTS] <ks>.<name> ...
+  const aggregatePattern = /CREATE\s+(?:OR\s+REPLACE\s+)?AGGREGATE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)/gi;
+  while ((m = aggregatePattern.exec(schemaContent)) !== null) {
+    result.aggregates++;
+  }
+
+  return result;
 };
 
 export const parseRowSizeInfo = (content: string): RowSizeInfo => {

@@ -1,9 +1,14 @@
 # Pricing Calculator for Amazon Keyspaces (for Apache Cassandra) 
 
-This application helps you quickly estimate your monthly costs when using **Amazon Keyspaces (for Apache Cassandra)**. By providing basic workload parameters—such as read/write throughput, data size, and TTL delete rates—you can view an approximate cost breakdown for **Provisioned** and **On-Demand** capacity modes.
+This application helps you quickly estimate your monthly costs when using **Amazon Keyspaces (for Apache Cassandra)**. By providing basic workload parameters—such as read/write throughput, data size, and TTL delete rates—you can view an approximate cost breakdown for **Provisioned** and **On-Demand** capacity modes. You can also determine Keyspaces compatiblity if providing your cassandra schema. 
 
 
 Try the calculator: [Pricing calculator for Amazon Keyspaces](https://aws-samples.github.io/sample-pricing-calculator-for-keyspaces/)
+
+Also try the new **Claude Skill** after downloading this repository
+```
+    claude "How much will keyspaces cost if im currently doing 500 writes per second, 400 reads per second, with 5 TB of data" 
+```
 
 ## Table of Contents
 1. [Features](#features)  
@@ -18,10 +23,12 @@ Try the calculator: [Pricing calculator for Amazon Keyspaces](https://aws-sample
 ---
 
 ## Features
+
 - **Dynamic Cost Estimation:** Quickly calculate approximate monthly charges based on read/write throughput, average row size, storage needs, TTL deletes, and more.
 - **Multi-Region Support:** Optionally replicate to up to five AWS Regions and see how your choices affect total cost.
 - **Provisioned vs. On-Demand:** Compare both capacity modes to determine the pricing strategy that best fits your use case.
 - **Point-in-Time Recovery (PITR) Toggle:** Easily include or exclude PITR in your cost estimates.
+- **Provide compatiblity:** Will provide compatiblity in report output when providing current cassandra schema
 
 ---
 
