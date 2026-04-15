@@ -125,14 +125,21 @@ Extract `provisioned.total`, `on_demand.total`, `provisioned_savings_plan.total`
 
 #### Step 6 — Present results
 
-1. **Sizing table** — rows, row size, storage, reads/s, writes/s per option
-2. **CQL** — full generated table definitions for each option
-3. **Pricing comparison table**:
+1. **Three-model summary table** — one row per metric, one column per option:
 
 | | Option A — Denorm | Option B — Normalized | Option C — Reverse Index |
 |---|---|---|---|
-| Provisioned/mo | $X | $X | $X |
-| On-Demand/mo | $X | $X | $X |
-| w/ Savings Plan/mo | $X | $X | $X |
+| Storage | X TB | X TB | X TB |
+| Reads/s | X | X | X |
+| Writes/s | X | X | X |
+| Bytes/row (avg) | X | X | X |
+| Backup | off / on | off / on | off / on |
+| Lookups per query | X | X | X |
+| **Provisioned + Savings Plan/mo** | **$X** | **$X** | **$X** |
+| **On-Demand + Savings Plan/mo** | **$X** | **$X** | **$X** |
 
-4. **Recommendation** — best option based on cost, query fit, write amplification, and storage trade-offs.
+- **Lookups per query**: number of separate Keyspaces reads required to satisfy a single user-facing query (e.g. 1 = single-table read, 2 = lookup table + data table, N = lookup returns N keys each needing a separate read).
+- **Backup**: reflect the `pitr_enabled` input; show `PITR on` or `off`.
+
+2. **CQL** — full generated table definitions for each option
+3. **Recommendation** — best option based on cost, query fit, write amplification, and storage trade-offs.

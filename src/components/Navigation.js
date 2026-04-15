@@ -28,6 +28,18 @@ const navItems = [
                 text: 'Documentation', 
                 href: 'https://aws.amazon.com/keyspaces/',
                 external: true 
+            },
+            {
+                type: 'link',
+                text: 'GitHub Repository',
+                href: 'https://github.com/aws-samples/sample-pricing-calculator-for-keyspaces',
+                external: true
+            },
+            {
+                type: 'link',
+                text: 'Claude Skill (estimates)',
+                href: 'https://github.com/aws-samples/sample-pricing-calculator-for-keyspaces/tree/main/.claude/skills',
+                external: true
             }
         ]
     }
