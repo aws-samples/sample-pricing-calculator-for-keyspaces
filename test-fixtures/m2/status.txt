@@ -1,0 +1,6 @@
+Datacenter: dc1
+===============
+Status=Up/Down
+|/ State=Normal/Leaving/Joining/Moving
+--  Address      Load        Tokens  Owns  Host ID                               Rack
+UN  10.0.0.1     1.5 MiB     256     ?     11111111-1111-1111-1111-111111111111  rack1

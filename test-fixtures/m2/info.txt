@@ -1,0 +1,18 @@
+ID                     : 11111111-1111-1111-1111-111111111111
+Gossip active          : true
+Native Transport active: true
+Thrift active          : false
+Load                   : 1.5 MiB
+Generation No          : 1700000000
+Uptime (seconds)       : 2628000
+Heap Memory (MB)       : 100.00 / 1024.00
+Off Heap Memory (MB)   : 1.00
+Data Center            : dc1
+Rack                   : rack1
+Exceptions             : 0
+Key Cache              : entries 0, size 0 bytes, capacity 100 MiB, 0 hits, 0 requests, NaN recent hit rate, 14400 save period in seconds
+Row Cache              : entries 0, size 0 bytes, capacity 0 bytes, 0 hits, 0 requests, NaN recent hit rate, 0 save period in seconds
+Counter Cache          : entries 0, size 0 bytes, capacity 50 MiB, 0 hits, 0 requests, NaN recent hit rate, 7200 save period in seconds
+Chunk Cache            : entries 0, size 0 bytes, capacity 480 MiB, 0 misses, 0 requests, NaN recent hit rate, NaN microseconds miss latency
+Percent Repaired       : 0.0%
+Token                  : (invoke with -T/--tokens to see all 256 tokens)

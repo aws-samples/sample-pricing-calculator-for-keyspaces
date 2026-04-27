@@ -1,0 +1,9 @@
+{"prepared_id": "0x01", "logged_keyspace": "bench", "query_string": "INSERT INTO bench.events (user_id, event_ts, payload) VALUES (?, ?, ?)"}
+{"prepared_id": "0x02", "logged_keyspace": "bench", "query_string": "INSERT INTO bench.events (user_id, event_ts, payload) VALUES (?, ?, ?) USING TTL 3600"}
+{"prepared_id": "0x03", "logged_keyspace": "bench", "query_string": "UPDATE bench.profile SET name = ? WHERE user_id = ? USING TTL 86400"}
+{"prepared_id": "0x04", "logged_keyspace": "bench", "query_string": "SELECT COUNT(*) FROM bench.events WHERE user_id = ?"}
+{"prepared_id": "0x05", "logged_keyspace": "bench", "query_string": "SELECT MAX(event_ts), MIN(event_ts) FROM bench.events WHERE user_id = ?"}
+{"prepared_id": "0x06", "logged_keyspace": null, "query_string": "BEGIN UNLOGGED BATCH INSERT INTO bench.events (user_id, event_ts) VALUES (?, ?) IF NOT EXISTS; INSERT INTO bench.events (user_id, event_ts) VALUES (?, ?); APPLY BATCH"}
+{"prepared_id": "0x07", "logged_keyspace": null, "query_string": "BEGIN UNLOGGED BATCH INSERT INTO bench.events (user_id, event_ts) VALUES (?, ?); INSERT INTO bench.events (user_id, event_ts) VALUES (?, ?); APPLY BATCH"}
+{"prepared_id": "0x08", "logged_keyspace": "bench", "query_string": "SELECT bench.normalize_email(email) FROM bench.users WHERE user_id = ?"}
+{"prepared_id": "0x09", "logged_keyspace": "bench", "query_string": "SELECT system.now() FROM bench.events WHERE user_id = ?"}

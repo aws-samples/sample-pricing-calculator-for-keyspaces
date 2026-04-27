@@ -2,18 +2,6 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { UserOptions, Table } from 'jspdf-autotable';
 
-// Logo is injected at construction time so this class works in both
-// browser (pass a webpack-resolved data URL) and Node.js (pass a
-// base64-encoded data URI loaded from the filesystem).
-let browserLogo: string | null = null;
-try {
-    // Dynamic require so ts-node (Node.js) never executes this import path.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    browserLogo = require('../data/logo-intuit.png');
-} catch {
-    // Running outside of webpack — caller must supply logoData explicitly.
-}
-
 declare module 'jspdf' {
     interface jsPDF {
         autoTable(options: UserOptions): void;
@@ -33,12 +21,12 @@ const formatCurrency = (amount: number): string => {
 
 // --- Input types ---
 
-interface Datacenter {
+export interface Datacenter {
     name: string;
     nodeCount: number;
 }
 
-interface KeyspaceEstimate {
+export interface KeyspaceEstimate {
     writes_per_second: number;
     reads_per_second: number;
     avg_read_row_size_bytes: number;
@@ -49,10 +37,10 @@ interface KeyspaceEstimate {
     replication_factor: number;
 }
 
-type EstimateResults = Record<string, Record<string, KeyspaceEstimate>>;
-type Regions = Record<string, string>;
+export type EstimateResults = Record<string, Record<string, KeyspaceEstimate>>;
+export type Regions = Record<string, string>;
 
-interface KeyspaceCost {
+export interface KeyspaceCost {
     name: string;
     storage: number;
     backup: number;
@@ -65,12 +53,12 @@ interface KeyspaceCost {
     on_demand_total: number;
 }
 
-interface DatacenterCost {
+export interface DatacenterCost {
     region: string;
     keyspaceCosts: Record<string, KeyspaceCost>;
 }
 
-interface Pricing {
+export interface Pricing {
     total_monthly_provisioned_cost: number;
     total_monthly_on_demand_cost: number;
     total_monthly_provisioned_cost_savings: number;
@@ -92,7 +80,17 @@ interface TcoEntry {
     operations?: { operator_hours?: { monthly_cost: number } };
 }
 
-type TcoData = Record<string, TcoEntry> | null;
+export type TcoData = Record<string, TcoEntry> | null;
+
+export interface Estimate {
+    label: string;
+    datacenters: Datacenter[];
+    regions: Regions;
+    estimateResults: EstimateResults;
+    pricing: Pricing;
+    tcoData?: TcoData;
+    compatibilityData?: CompatibilityData | null;
+}
 
 interface TableCompatibilityIssue {
     indexes: string[];
@@ -100,10 +98,19 @@ interface TableCompatibilityIssue {
     materializedViews: string[];
 }
 
+interface QueryPatternIssueRef {
+    prepared_id?: string;
+    query_string: string;
+}
+
 export interface CompatibilityData {
     functions: number;
     aggregates: number;
     keyspaces: Record<string, Record<string, TableCompatibilityIssue>>;
+    queryPatterns?: {
+        lwtInUnloggedBatch: QueryPatternIssueRef[];
+        aggregations: QueryPatternIssueRef[];
+    };
 }
 
 // --- Render option types ---
@@ -147,11 +154,6 @@ class CreatePDFReport {
     protected doc!: jsPDF;
     private yPosition: number = 20;
     private xPosition: number = 20;
-    protected readonly logoData: string | null;
-
-    constructor(logoData?: string | null) {
-        this.logoData = logoData !== undefined ? logoData : browserLogo;
-    }
 
     createReport(
         datacenters: Datacenter[],
@@ -179,18 +181,137 @@ class CreatePDFReport {
         this._output();
     }
 
+    /**
+     * Build a single PDF that compares multiple pricing estimates side-by-side.
+     * Renders a comparison summary table up front, then per-estimate sections
+     * (results, pricing, compatibility) with each estimate's label as a header.
+     */
+    createMultiReport(estimates: Estimate[]): void {
+        if (!estimates || estimates.length === 0) {
+            throw new Error('createMultiReport requires at least one estimate');
+        }
+
+        this.doc = new jsPDF();
+        this.yPosition = 20;
+        this.xPosition = 20;
+
+        this.addTitle('Comparison report');
+        this.addMultiOverview(estimates);
+        this.addComparisonSummaryTable(estimates);
+        this.addIntroduction();
+
+        estimates.forEach((est, idx) => {
+            this.doc.addPage();
+            this.yPosition = 20;
+
+            this.addEstimateHeader(est.label, idx + 1, estimates.length);
+            this.addResultsTables(est.datacenters, est.regions, est.estimateResults);
+            this.addPricingTables(est.pricing);
+            this.addCompatibilitySection(est.compatibilityData ?? null);
+        });
+
+        if (this.yPosition > 220) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+        this.addAssumptions();
+
+        this._output();
+    }
+
     /** Override in subclasses to change how the finished PDF is delivered. */
     protected _output(): void {
         this.doc.save('keyspaces-pricing-estimate.pdf');
     }
 
-    private addTitle(): void {
+    private addTitle(subtitle: string = 'Pricing estimate report'): void {
         this.doc.setFontSize(20);
         this.doc.setFont('helvetica', 'bold');
         this.doc.text('Amazon Keyspaces (for Apache Cassandra)', this.xPosition, this.yPosition);
         this.yPosition += 10;
-        this.doc.text('Pricing estimate report', this.xPosition, this.yPosition);
+        this.doc.text(subtitle, this.xPosition, this.yPosition);
         this.yPosition += 20;
+    }
+
+    private addMultiOverview(estimates: Estimate[]): void {
+        const labels = estimates.map(e => e.label).join(', ');
+        const overview = `This report compares ${estimates.length} Amazon Keyspaces pricing estimates side-by-side: ${labels}. The summary table below shows the headline workload and cost figures for each estimate. Per-estimate detail (input keyspaces, pricing breakdown, and compatibility findings where applicable) follows on the subsequent pages.`;
+
+        this.addSection('Comparison overview', overview, { addPageAfter: false });
+        this.yPosition += 5;
+    }
+
+    private addComparisonSummaryTable(estimates: Estimate[]): void {
+        if (this.yPosition > 220) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        this.doc.setFontSize(12);
+        this.doc.setFont('helvetica', 'bold');
+        this.doc.text('Estimate comparison summary', this.xPosition, this.yPosition);
+        this.yPosition += 8;
+
+        const rows = estimates.map((est) => {
+            let storageGb = 0;
+            let readsPs = 0;
+            let writesPs = 0;
+            for (const dc of est.datacenters) {
+                const ksMap = est.estimateResults[dc.name] ?? {};
+                for (const ks of Object.values(ksMap)) {
+                    storageGb += ks.uncompressed_single_replica_gb;
+                    readsPs += ks.reads_per_second;
+                    writesPs += ks.writes_per_second;
+                }
+            }
+            return [
+                est.label,
+                Math.round(storageGb).toString(),
+                Math.round(readsPs).toString(),
+                Math.round(writesPs).toString(),
+                formatCurrency(est.pricing.total_monthly_on_demand_cost),
+                formatCurrency(est.pricing.total_monthly_on_demand_cost_savings),
+                formatCurrency(est.pricing.total_monthly_provisioned_cost),
+                formatCurrency(est.pricing.total_monthly_provisioned_cost_savings),
+            ];
+        });
+
+        this.doc.autoTable({
+            startY: this.yPosition,
+            head: [[
+                'Estimate',
+                'Storage (GB)',
+                'Reads/s',
+                'Writes/s',
+                'On-Demand /mo',
+                'OD + SP /mo',
+                'Provisioned /mo',
+                'Prov + SP /mo',
+            ]],
+            body: rows,
+            theme: 'grid',
+            headStyles: { fillColor: [66, 139, 202] },
+            styles: { fontSize: 8 },
+            columnStyles: {
+                0: { cellWidth: 38 },
+                1: { cellWidth: 18 },
+                2: { cellWidth: 18 },
+                3: { cellWidth: 18 },
+                4: { cellWidth: 22 },
+                5: { cellWidth: 22 },
+                6: { cellWidth: 22 },
+                7: { cellWidth: 22 },
+            },
+        });
+
+        this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 12;
+    }
+
+    private addEstimateHeader(label: string, index: number, total: number): void {
+        this.doc.setFontSize(16);
+        this.doc.setFont('helvetica', 'bold');
+        this.doc.text(`${label} — estimate ${index} of ${total}`, this.xPosition, this.yPosition);
+        this.yPosition += 12;
     }
 
     private addDate(): void {
@@ -330,7 +451,7 @@ Many customers face challenges operating and scaling self-managed Cassandra clus
 
 These challenges can be addressed with a solution that provides serverless infrastructure, elastic scalability, built-in security, and automated operations — all without the need to manage nodes, clusters, or software maintenance tasks.
 
-Amazon Keyspaces uniquely delivers these capabilities through its purpose-built, serverless architecture, seamless integration with AWS security and observability tools, and pay-as-you-go pricing model — differentiating it from self-managed Cassandra, managed services on virtual machines, and other NoSQL offerings.
+Amazon Keyspaces uniquely delivers these capabilities through its purpose-built, serverless architecture, seamless integration with AWS security and observability tools, and pay-as-you-go pricing model.
 
 With 99.999% availability SLA, the ability to double capacity in under 30 minutes, and consistent single-digit millisecond read/write performance, Keyspaces helps customers achieve operational excellence at scale. Leading organizations such as Monzo Bank, Intuit, GE Digital, and Adobe rely on Keyspaces to power critical, high-scale applications.`;
 
@@ -343,13 +464,14 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
 
     private customerQuote(): void {
         const content = `"In our prior state, if we had to scale out our cluster for more capacity, we would need a lead time of a few weeks. Now, using Amazon Keyspaces, we can accomplish this in 1 day."
-        
+
         - Manoj Mohan, Software Engineer Leader, Intuit`;
 
         this.addSection("Intuit Zero downtime migration to Amazon Keyspaces", content, {
-            ...(this.logoData ? { imageUrl: this.logoData, imageWidth: 66, imageHeight: 25, imageMargin: 15 } : {}),
             addPageAfter: false
         });
+
+        this.yPosition += 20;
     }
 
     private addCostSummary(pricing: Pricing): void {
@@ -574,10 +696,15 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
     private addCompatibilitySection(compatibilityData: CompatibilityData | null): void {
         if (!compatibilityData) return;
 
+        const queryPatterns = compatibilityData.queryPatterns;
+        const lwtCount = queryPatterns?.lwtInUnloggedBatch.length ?? 0;
+        const aggCount = queryPatterns?.aggregations.length ?? 0;
         const hasIssues =
             compatibilityData.functions > 0 ||
             compatibilityData.aggregates > 0 ||
-            Object.keys(compatibilityData.keyspaces).length > 0;
+            Object.keys(compatibilityData.keyspaces).length > 0 ||
+            lwtCount > 0 ||
+            aggCount > 0;
 
         if (this.yPosition > 200) {
             this.doc.addPage();
@@ -614,6 +741,63 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             this.addSubSection('Keyspace-level issues:', keyspaceLevelContent, {
                 addPageAfter: false
             });
+
+            this.yPosition += 5;
+        }
+
+        // Query-pattern issues from prepared statements (optional)
+        if (queryPatterns && (lwtCount > 0 || aggCount > 0)) {
+            const queryPatternsContent =
+                `        • Lightweight Transactions in UNLOGGED BATCH: ${lwtCount}
+        • Aggregation queries (COUNT/MIN/MAX/SUM/AVG): ${aggCount}
+
+        Amazon Keyspaces does not support LWT inside UNLOGGED BATCH or server-side aggregation functions. These query patterns must be rewritten on the client side. The offending prepared statements are listed below.`;
+
+            this.addSubSection('Query-pattern issues (from prepared statements):', queryPatternsContent, {
+                addPageAfter: false
+            });
+
+            this.yPosition += 5;
+
+            const renderQueryTable = (heading: string, issues: QueryPatternIssueRef[]) => {
+                if (issues.length === 0) return;
+
+                if (this.yPosition > 250) {
+                    this.doc.addPage();
+                    this.yPosition = 20;
+                }
+
+                this.doc.setFontSize(11);
+                this.doc.setFont('helvetica', 'bold');
+                this.doc.text(heading, this.xPosition, this.yPosition);
+                this.yPosition += 6;
+
+                const rows = issues.map((issue) => {
+                    const normalized = issue.query_string.replace(/\s+/g, ' ').trim();
+                    const truncated = normalized.length > 400
+                        ? `${normalized.slice(0, 400)}…`
+                        : normalized;
+                    return [issue.prepared_id ?? '-', truncated];
+                });
+
+                this.doc.autoTable({
+                    startY: this.yPosition,
+                    head: [['Prepared ID', 'Query']],
+                    body: rows,
+                    theme: 'grid',
+                    headStyles: { fillColor: [204, 51, 51] },
+                    styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
+                    columnStyles: {
+                        0: { cellWidth: 35 },
+                        1: { cellWidth: 145 },
+                    },
+                });
+
+                this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 6;
+            };
+
+            renderQueryTable('LWT in UNLOGGED BATCH:', queryPatterns.lwtInUnloggedBatch);
+            renderQueryTable('Aggregation queries:', queryPatterns.aggregations);
 
             this.yPosition += 5;
         }

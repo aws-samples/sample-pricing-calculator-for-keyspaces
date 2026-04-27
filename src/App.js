@@ -8,8 +8,8 @@ import {
     buildKeyspacesEstimateInput,
     calculatePricingEstimate,
     mapPricingEstimateToKeyspacesTable
-} from './utils/PricingFormulas';
-import CreatePDFReport from './components/CreatePDFReport';
+} from './calculator/PricingFormulas';
+import CreatePDFReport from './calculator/CreatePDFReport';
 import './App.css';
 
 import {
@@ -58,11 +58,13 @@ function App() {
     const [cassandraSchemaData, setCassandraSchemaData] = useState({});
     const [cassandraRowSizeData, setCassandraRowSizeData] = useState({});
     const [cassandraTcoData, setCassandraTcoData] = useState({});
+    const [cassandraPreparedData, setCassandraPreparedData] = useState({});
     const [cassandraTablestatsValidation, setCassandraTablestatsValidation] = useState({});
     const [cassandraInfoValidation, setCassandraInfoValidation] = useState({});
     const [cassandraSchemaValidation, setCassandraSchemaValidation] = useState({});
     const [cassandraRowSizeValidation, setCassandraRowSizeValidation] = useState({});
     const [cassandraTcoValidation, setCassandraTcoValidation] = useState({});
+    const [cassandraPreparedValidation, setCassandraPreparedValidation] = useState({});
     const [cassandraEstimateValidation, setCassandraEstimateValidation] = useState({});
     const [cassandraEstimateResults, setCassandraEstimateResults] = useState({});
 
@@ -79,11 +81,13 @@ function App() {
         const initialSchema = {};
         const initialRowSize = {};
         const initialTco = {};
+        const initialPrepared = {};
         const initialTablestatsValidation = {};
         const initialInfoValidation = {};
         const initialSchemaValidation = {};
         const initialRowSizeValidation = {};
         const initialTcoValidation = {};
+        const initialPreparedValidation = {};
         const initialEstimateValidation = {};
         const initialEstimateResults = {};
         
@@ -93,17 +97,21 @@ function App() {
                 tablestats: null,
                 info: null,
                 schema: null,
-                rowSize: null
+                rowSize: null,
+                tco: null,
+                prepared: null
             };
             initialTablestats[dc.name] = null;
             initialInfo[dc.name] = null;
             initialSchema[dc.name] = null;
             initialRowSize[dc.name] = null;
+            initialPrepared[dc.name] = null;
             initialTablestatsValidation[dc.name] = null;
             initialInfoValidation[dc.name] = null;
             initialSchemaValidation[dc.name] = null;
             initialRowSizeValidation[dc.name] = null;
             initialTcoValidation[dc.name] = null;
+            initialPreparedValidation[dc.name] = null;
             initialEstimateValidation[dc.name] = null;
             initialEstimateResults[dc.name] = null;
         });
@@ -115,11 +123,13 @@ function App() {
         setCassandraSchemaData(initialSchema);
         setCassandraRowSizeData(initialRowSize);
         setCassandraTcoData(initialTco);
+        setCassandraPreparedData(initialPrepared);
         setCassandraTablestatsValidation(initialTablestatsValidation);
         setCassandraInfoValidation(initialInfoValidation);
         setCassandraSchemaValidation(initialSchemaValidation);
         setCassandraRowSizeValidation(initialRowSizeValidation);
         setCassandraTcoValidation(initialTcoValidation);
+        setCassandraPreparedValidation(initialPreparedValidation);
         setCassandraEstimateValidation(initialEstimateValidation);
         setCassandraEstimateResults(initialEstimateResults);
     };
@@ -174,6 +184,12 @@ function App() {
                             [datacenter]: parsedData
                         }));
                         break;
+                case 'prepared':
+                        setCassandraPreparedData(prev => ({
+                            ...prev,
+                            [datacenter]: parsedData
+                        }));
+                        break;
                 default:
                     break;
             }
@@ -208,6 +224,12 @@ function App() {
                     break;
                 case 'tco':
                         setCassandraTcoValidation(prev => ({
+                            ...prev,
+                            [datacenter]: validation
+                        }));
+                        break;
+                case 'prepared':
+                        setCassandraPreparedValidation(prev => ({
                             ...prev,
                             [datacenter]: validation
                         }));
@@ -423,11 +445,13 @@ function App() {
                                                 schemaData={cassandraSchemaData}
                                                 rowSizeData={cassandraRowSizeData}
                                                 tcoData={cassandraTcoData}
+                                                preparedData={cassandraPreparedData}
                                                 tablestatsValidation={cassandraTablestatsValidation}
                                                 infoValidation={cassandraInfoValidation}
                                                 schemaValidation={cassandraSchemaValidation}
                                                 rowSizeValidation={cassandraRowSizeValidation}
                                                 tcoValidation={cassandraTcoValidation}
+                                                preparedValidation={cassandraPreparedValidation}
                                                 estimateValidation={cassandraEstimateValidation}
                                                 estimateResults={cassandraEstimateResults}
                                                 onStatusFileChange={handleCassandraStatusFileChange}

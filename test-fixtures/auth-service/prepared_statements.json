@@ -1,0 +1,26 @@
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f01", "logged_keyspace": "auth_service", "query_string": "SELECT * FROM auth_service.users WHERE id = ?"}
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f02", "logged_keyspace": "auth_service", "query_string": "SELECT id, email, active, lastname, firstname FROM auth_service.users WHERE id = ?"}
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f03", "logged_keyspace": "auth_service", "query_string": "SELECT * FROM auth_service.clients WHERE id = ?"}
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f04", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.audit_log (bucket, created_at, client_id, payload) VALUES (?, ?, ?, ?)"}
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f05", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.contacts (id, name, email, phone, country) VALUES (?, ?, ?, ?, ?)"}
+{"prepared_id": "0xa1b2c3d4e5f60718293a4b5c6d7e8f06", "logged_keyspace": "auth_service", "query_string": "UPDATE auth_service.customer SET active = ?, name = ? WHERE id = ?"}
+{"prepared_id": "0xb2c3d4e5f60718293a4b5c6d7e8f0a01", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.access_data (code, payload) VALUES (?, ?) USING TTL 600"}
+{"prepared_id": "0xb2c3d4e5f60718293a4b5c6d7e8f0a02", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.refresh_data (refresh_token, access_token) VALUES (?, ?) USING TTL 2592000"}
+{"prepared_id": "0xb2c3d4e5f60718293a4b5c6d7e8f0a03", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.auth_data (code, payload) VALUES (?, ?) USING TTL 60"}
+{"prepared_id": "0xb2c3d4e5f60718293a4b5c6d7e8f0a04", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.reset_password (code, email) VALUES (?, ?) USING TTL 1800"}
+{"prepared_id": "0xb2c3d4e5f60718293a4b5c6d7e8f0a05", "logged_keyspace": "auth_service", "query_string": "UPDATE auth_service.login_unsuccessful_attempts USING TTL 3600 SET unsuccessful_attempts = ? WHERE email = ?"}
+{"prepared_id": "0xc3d4e5f60718293a4b5c6d7e8f0a0b01", "logged_keyspace": "auth_service", "query_string": "SELECT COUNT(*) FROM auth_service.audit_log WHERE bucket = ? AND created_at >= ?"}
+{"prepared_id": "0xc3d4e5f60718293a4b5c6d7e8f0a0b02", "logged_keyspace": "auth_service", "query_string": "SELECT MAX(created_at) FROM auth_service.audit_log WHERE bucket = ?"}
+{"prepared_id": "0xc3d4e5f60718293a4b5c6d7e8f0a0b03", "logged_keyspace": "auth_service", "query_string": "SELECT MIN(version), MAX(version) FROM auth_service.schema_version WHERE type = ?"}
+{"prepared_id": "0xc3d4e5f60718293a4b5c6d7e8f0a0b04", "logged_keyspace": "auth_service", "query_string": "SELECT SUM(unsuccessful_attempts) FROM auth_service.login_unsuccessful_attempts"}
+{"prepared_id": "0xc3d4e5f60718293a4b5c6d7e8f0a0b05", "logged_keyspace": "auth_service", "query_string": "SELECT AVG(execution_time) FROM auth_service.schema_update_version WHERE script_name = ?"}
+{"prepared_id": "0xd4e5f60718293a4b5c6d7e8f0a0b0c01", "logged_keyspace": "auth_service", "query_string": "BEGIN UNLOGGED BATCH INSERT INTO auth_service.auth_data (code, payload) VALUES (?, ?) IF NOT EXISTS; INSERT INTO auth_service.audit_log (bucket, created_at, client_id, payload) VALUES (?, ?, ?, ?); APPLY BATCH"}
+{"prepared_id": "0xd4e5f60718293a4b5c6d7e8f0a0b0c02", "logged_keyspace": "auth_service", "query_string": "BEGIN UNLOGGED BATCH UPDATE auth_service.users SET password = ?, password_validity = ? WHERE id = ? IF password = ?; INSERT INTO auth_service.audit_log (bucket, created_at, client_id, payload) VALUES (?, ?, ?, ?); APPLY BATCH"}
+{"prepared_id": "0xe5f60718293a4b5c6d7e8f0a0b0c0d01", "logged_keyspace": "auth_service", "query_string": "INSERT INTO auth_service.users (id, email, active, created) VALUES (?, ?, true, ?) IF NOT EXISTS"}
+{"prepared_id": "0xe5f60718293a4b5c6d7e8f0a0b0c0d02", "logged_keyspace": "auth_service", "query_string": "UPDATE auth_service.customer SET active = ? WHERE id = ? IF EXISTS"}
+{"prepared_id": "0xe5f60718293a4b5c6d7e8f0a0b0c0d03", "logged_keyspace": "auth_service", "query_string": "BEGIN BATCH INSERT INTO auth_service.clients (id, redirect_uri, secret) VALUES (?, ?, ?) IF NOT EXISTS; APPLY BATCH"}
+{"prepared_id": "0xe5f60718293a4b5c6d7e8f0a0b0c0d04", "logged_keyspace": "auth_service", "query_string": "BEGIN UNLOGGED BATCH INSERT INTO auth_service.audit_log (bucket, created_at, client_id, payload) VALUES (?, ?, ?, ?); INSERT INTO auth_service.audit_log (bucket, created_at, client_id, payload) VALUES (?, ?, ?, ?); APPLY BATCH"}
+{"prepared_id": "0xf60718293a4b5c6d7e8f0a0b0c0d0e01", "logged_keyspace": null, "query_string": "SELECT * FROM tpd_primary.message WHERE id = ?"}
+{"prepared_id": "0xf60718293a4b5c6d7e8f0a0b0c0d0e02", "logged_keyspace": null, "query_string": "SELECT * FROM tpd_primary.message_tracking WHERE id = ? AND time >= ? AND time <= ?"}
+{"prepared_id": "0xf60718293a4b5c6d7e8f0a0b0c0d0e03", "logged_keyspace": null, "query_string": "SELECT * FROM \"Portal\".replies WHERE type = ? AND systemid = ? AND mkey = ? AND mkey_extension = ?"}
+{"prepared_id": "0xf60718293a4b5c6d7e8f0a0b0c0d0e04", "logged_keyspace": null, "query_string": "SELECT * FROM reaper_db.repair_run WHERE id = ?"}

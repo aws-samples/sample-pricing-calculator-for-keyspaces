@@ -1,7 +1,7 @@
-import pricingDataJson from '../data/mcs.json';
+import pricingDataJson from './data/mcs.json';
 import { system_keyspaces, REPLICATION_FACTOR, SECONDS_PER_MONTH, GIGABYTE } from './Constants';
-import { HOURS_PER_MONTH } from '../components/ParsingHelpers';
-import savingsPlansMap from '../components/PricingData';
+import { HOURS_PER_MONTH } from './ParsingHelpers';
+import savingsPlansMap from './PricingData';
 
 // --- Type definitions ---
 
@@ -206,8 +206,10 @@ const getRegionPricing = (regionName: string): RegionPricing | null => {
  */
 export const buildCassandraLocalSet = (
   samples: Samples,
-  statusData: Map<string, number>
+  statusData: Map<string, number>,
+  opts?: { preparedTtlTables?: Set<string> }
 ): CassandraLocalSet => {
+  const preparedTtl = opts?.preparedTtlTables;
   const result: CassandraLocalSet = {
     data: { keyspaces: {} },
   };
@@ -259,6 +261,13 @@ export const buildCassandraLocalSet = (
               averageBytes = (isNaN(parsedBytes) || parsedBytes <= 0) ? 1 : parsedBytes;
               const ttlStr = rowEntry['default-ttl'] ?? 'y';
               hasTtl = String(ttlStr).trim() === 'y';
+            }
+            // Prepared-statement USING TTL evidence unions into has_ttl:
+            // if any prepared statement writes TTL rows to this table, 100%
+            // of its writes are treated as TTL deletes (same as a table
+            // with default_time_to_live set).
+            if (!hasTtl && preparedTtl && preparedTtl.has(fullyQualifiedTableName.toLowerCase())) {
+              hasTtl = true;
             }
             dcTables[tableName] = {
               table_name: tableName,
@@ -698,8 +707,7 @@ export const calculateOnDemandReadUnitsPerMonthCost = (
 export const calculateOnDemandWriteUnitsPerMonthCost = (
   writes_per_second: number,
   avg_write_row_size_bytes: number,
-  onDemandWritePrice: number,
-  _savings_percentage = 0
+  onDemandWritePrice: number
 ): number =>
   calculateOnDemandWriteUnitsPerMonth(writes_per_second, avg_write_row_size_bytes) * onDemandWritePrice;
 

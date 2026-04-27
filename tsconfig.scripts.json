@@ -12,6 +12,6 @@
   },
   "include": [
     "src/**/*",
-    ".claude/skills/keyspaces-pricing/scripts/*.ts"
+    "scripts/*.ts"
   ]
 }

@@ -23,7 +23,7 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build",
     "start": "react-scripts start",
-    "build": "./get-pricing.sh && react-scripts build",
+    "build": "./tools/get-pricing.sh && react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },

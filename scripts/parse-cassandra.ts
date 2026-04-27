@@ -8,7 +8,8 @@
  * Imports directly from ParsingHelpers.ts and PricingFormulas.ts — no duplication.
  *
  * Usage:
- *   npx ts-node parse-cassandra.ts \
+ *   npx ts-node --require tsconfig-paths/register --project tsconfig.scripts.json \
+ *     scripts/parse-cassandra.ts \
  *     --region    us-east-1 \
  *     --tablestats tablestats.txt \
  *     [--status   status.txt] \
@@ -28,9 +29,13 @@ import {
   parseNodetoolInfo,
   parse_nodetool_tablestats,
   parse_cassandra_schema,
+  parse_cassandra_schema_compatibility,
+  parse_prepared_statements,
   parseRowSizeInfo,
   scanCassandraFiles,
-} from 'src/components/ParsingHelpers';
+  type CompatibilityInfo,
+  type QueryPatternsInfo,
+} from 'src/calculator/ParsingHelpers';
 
 import {
   buildCassandraLocalSet,
@@ -42,9 +47,9 @@ import {
   type EstimateResults,
   type KeyspaceAggregate,
   type PricingEstimateResult,
-} from 'src/utils/PricingFormulas';
+} from 'src/calculator/PricingFormulas';
 
-const regionsMap: Record<string, string> = require('src/data/regions.json');
+const regionsMap: Record<string, string> = require('src/calculator/data/regions.json');
 
 // ─── CLI arg parsing ──────────────────────────────────────────────────────────
 
@@ -55,12 +60,13 @@ interface Args {
   tablestats: string | null;
   rowsize: string | null;
   schema: string | null;
+  prepared: string | null;
   pitr: boolean;
   dir: string | null;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { region: 'us-east-1', info: [], status: null, tablestats: null, rowsize: null, schema: null, pitr: false, dir: null };
+  const args: Args = { region: 'us-east-1', info: [], status: null, tablestats: null, rowsize: null, schema: null, prepared: null, pitr: false, dir: null };
   let i = 0;
   while (i < argv.length) {
     switch (argv[i]) {
@@ -70,6 +76,7 @@ function parseArgs(argv: string[]): Args {
       case '--tablestats': args.tablestats = argv[++i]; break;
       case '--rowsize':    args.rowsize = argv[++i]; break;
       case '--schema':     args.schema = argv[++i]; break;
+      case '--prepared':   args.prepared = argv[++i]; break;
       case '--dir':        args.dir = argv[++i]; break;
       case '--pitr':       args.pitr = true; break;
     }
@@ -95,6 +102,7 @@ function resolveArgsFromDir(dir: string, args: Args): void {
   if (args.info.length === 0)        args.info.push(...scan.info);
   if (!args.rowsize && scan.rowsize) args.rowsize = scan.rowsize;
   if (!args.schema  && scan.schema)  args.schema  = scan.schema;
+  if (!args.prepared && scan.prepared) args.prepared = scan.prepared;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -142,9 +150,18 @@ function main() {
   }
 
   const dcNames = [...nodesByDc.keys()];
-  const schema = args.schema
-    ? parse_cassandra_schema(fs.readFileSync(args.schema, 'utf8'), dcNames[0])
+  const schemaContent = args.schema ? fs.readFileSync(args.schema, 'utf8') : null;
+  const schema = schemaContent ? parse_cassandra_schema(schemaContent, dcNames[0]) : null;
+  const compatibility: CompatibilityInfo | null = schemaContent
+    ? parse_cassandra_schema_compatibility(schemaContent)
     : null;
+  const preparedContent = args.prepared ? fs.readFileSync(args.prepared, 'utf8') : null;
+  const queryPatterns: QueryPatternsInfo | null = preparedContent
+    ? parse_prepared_statements(preparedContent)
+    : null;
+  const preparedTtlTables = queryPatterns
+    ? new Set(Object.keys(queryPatterns.ttl_tables))
+    : undefined;
 
   // Convert SchemaInfo → NodePayload schema shape (drop 'class' and 'tables', keep 'datacenters')
   const nodeSchema = schema
@@ -168,7 +185,7 @@ function main() {
 
   // ── Aggregate using PricingFormulas.ts ────────────────────────────────────
 
-  const cassandraSet = buildCassandraLocalSet(samples, statusData);
+  const cassandraSet = buildCassandraLocalSet(samples, statusData, { preparedTtlTables });
 
   const estimateResults: EstimateResults = {};
   for (const dc of dcNames) {
@@ -197,6 +214,71 @@ function main() {
     reads_provisioned: sumProvRead, writes_provisioned: sumProvWrite,
   } = aggregatePricingTotals(pricing);
 
+  let compatibilityReport: {
+    has_issues: boolean;
+    summary: {
+      total_issues: number;
+      schema: {
+        total_issues: number;
+        keyspaces_affected: number;
+        tables_affected: number;
+        functions: number;
+        aggregates: number;
+      } | null;
+      query_patterns: {
+        lwt_in_unlogged_batch: number;
+        aggregations: number;
+        ttl_tables: number;
+      } | null;
+    };
+    details: {
+      schema: CompatibilityInfo | null;
+      query_patterns: QueryPatternsInfo | null;
+    };
+  } | null = null;
+  if (compatibility || queryPatterns) {
+    let schemaSummary: {
+      total_issues: number;
+      keyspaces_affected: number;
+      tables_affected: number;
+      functions: number;
+      aggregates: number;
+    } | null = null;
+    if (compatibility) {
+      let total_table_issues = 0;
+      let tables_affected = 0;
+      for (const tables of Object.values(compatibility.keyspaces)) {
+        for (const issue of Object.values(tables)) {
+          const count = issue.indexes.length + issue.triggers.length + issue.materializedViews.length;
+          if (count > 0) { tables_affected++; total_table_issues += count; }
+        }
+      }
+      schemaSummary = {
+        total_issues: total_table_issues + compatibility.functions + compatibility.aggregates,
+        keyspaces_affected: Object.keys(compatibility.keyspaces).length,
+        tables_affected,
+        functions: compatibility.functions,
+        aggregates: compatibility.aggregates,
+      };
+    }
+    const querySummary = queryPatterns
+      ? {
+          lwt_in_unlogged_batch: queryPatterns.lwt_in_unlogged_batch.length,
+          aggregations:          queryPatterns.aggregations.length,
+          ttl_tables:            Object.keys(queryPatterns.ttl_tables).length,
+        }
+      : null;
+    const total_issues =
+      (schemaSummary?.total_issues ?? 0) +
+      (querySummary?.lwt_in_unlogged_batch ?? 0) +
+      (querySummary?.aggregations ?? 0);
+    compatibilityReport = {
+      has_issues: total_issues > 0,
+      summary: { total_issues, schema: schemaSummary, query_patterns: querySummary },
+      details: { schema: compatibility, query_patterns: queryPatterns },
+    };
+  }
+
   const result = {
     region: { short: args.region, long: longRegion },
     source: 'cassandra-diagnostic-files',
@@ -221,6 +303,7 @@ function main() {
       total: pricing.total_monthly_provisioned_cost_savings,
     },
     per_datacenter: pricing.total_datacenter_cost,
+    compatibility: compatibilityReport,
     report_data: {
       datacenters,
       regions,

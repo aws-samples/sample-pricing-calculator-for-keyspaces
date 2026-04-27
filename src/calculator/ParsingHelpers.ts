@@ -41,6 +41,28 @@ export interface CompatibilityInfo {
   keyspaces: Record<string, Record<string, TableCompatibilityIssue>>;
 }
 
+// --- Prepared-statement compatibility types ---
+
+export interface QueryPatternIssue {
+  prepared_id: string;
+  query_string: string;
+}
+
+export interface AggregationIssue extends QueryPatternIssue {
+  function: string; // e.g. 'COUNT', 'MIN'
+}
+
+export interface TtlTableInfo {
+  uses_ttl: true;
+  ttl_values: number[];
+}
+
+export interface QueryPatternsInfo {
+  lwt_in_unlogged_batch: QueryPatternIssue[];
+  aggregations: AggregationIssue[];
+  ttl_tables: Record<string, TtlTableInfo>; // key is "ks.table" (lowercased)
+}
+
 interface TcoSingleNode {
   instance: { monthly_cost: number; [key: string]: unknown };
   storage?: { monthly_cost: number; [key: string]: unknown };
@@ -321,6 +343,100 @@ export const parse_cassandra_schema_compatibility = (schemaContent: string): Com
   return result;
 };
 
+/**
+ * Parse the output of `SELECT JSON * FROM system.prepared_statements` (or
+ * the newline-delimited JSON produced by prepared-statements-sampler.sh)
+ * and detect Amazon Keyspaces compatibility concerns in the query text:
+ *
+ *   - LWT inside `BEGIN UNLOGGED BATCH` (not supported)
+ *   - Aggregate function calls (COUNT / MIN / MAX / SUM / AVG — not supported)
+ *   - `USING TTL <n>` per target table (informational — used to populate
+ *     has_ttl for pricing when the base schema has no default TTL)
+ *
+ * UDF usage is intentionally not detected here — `CREATE FUNCTION` in the
+ * schema is the source of truth, surfaced by parse_cassandra_schema_compatibility.
+ *
+ * Accepts either:
+ *   - NDJSON (one JSON object per line), or
+ *   - raw cqlsh output containing `{...}` lines mixed with header/footer
+ *     noise (non-JSON lines are skipped).
+ */
+export const parse_prepared_statements = (content: string): QueryPatternsInfo => {
+  const result: QueryPatternsInfo = {
+    lwt_in_unlogged_batch: [],
+    aggregations: [],
+    ttl_tables: {},
+  };
+
+  const aggNames = ['COUNT', 'MIN', 'MAX', 'SUM', 'AVG'];
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+
+    let stmt: { prepared_id?: string; query_string?: string; logged_keyspace?: string | null };
+    try {
+      stmt = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const query = stmt.query_string ?? '';
+    const preparedId = stmt.prepared_id ?? '';
+    if (!query) continue;
+    const issueRef: QueryPatternIssue = { prepared_id: preparedId, query_string: query };
+
+    // 1. LWT inside UNLOGGED BATCH
+    //    BEGIN UNLOGGED BATCH ... (IF NOT EXISTS | IF EXISTS | IF <col>=) ... APPLY BATCH
+    const unloggedBatch = /\bBEGIN\s+UNLOGGED\s+BATCH\b([\s\S]*?)\bAPPLY\s+BATCH\b/i.exec(query);
+    if (unloggedBatch && /\bIF\s+(NOT\s+EXISTS\b|EXISTS\b|\w+\s*[=<>!])/i.test(unloggedBatch[1])) {
+      result.lwt_in_unlogged_batch.push(issueRef);
+    }
+
+    // 2. Aggregations — look in SELECT projection. Simplest: any occurrence
+    //    of a supported aggregate name followed by '(' inside a SELECT query.
+    //    Guarded with a \b boundary + whitespace-tolerant '(' to avoid
+    //    matching column names that happen to contain these words.
+    if (/\bSELECT\b/i.test(query)) {
+      for (const fn of aggNames) {
+        const re = new RegExp(`\\b${fn}\\s*\\(`, 'i');
+        if (re.test(query)) {
+          result.aggregations.push({ ...issueRef, function: fn });
+          break; // one finding per statement is enough
+        }
+      }
+    }
+
+    // 3. USING TTL per target table
+    //    Match each USING ... TTL <n> occurrence, then associate it with the
+    //    nearest preceding INSERT INTO / UPDATE target table.
+    const ttlPattern = /\bUSING\b[\s\S]*?\bTTL\s+(\d+)/gi;
+    let tm: RegExpExecArray | null;
+    while ((tm = ttlPattern.exec(query)) !== null) {
+      const ttlValue = parseInt(tm[1], 10);
+      const before = query.substring(0, tm.index);
+      // Find the last INSERT INTO / UPDATE before this USING TTL clause.
+      const targetPattern = /\b(?:INSERT\s+INTO|UPDATE)\s+(?:"?(\w+)"?\.)?"?(\w+)"?/gi;
+      let tgt: RegExpExecArray | null;
+      let lastMatch: RegExpExecArray | null = null;
+      while ((tgt = targetPattern.exec(before)) !== null) lastMatch = tgt;
+      if (!lastMatch) continue;
+      const ks = (lastMatch[1] ?? stmt.logged_keyspace ?? '').toLowerCase();
+      const tbl = lastMatch[2].toLowerCase();
+      if (!ks || !tbl) continue;
+      const key = `${ks}.${tbl}`;
+      if (!result.ttl_tables[key]) {
+        result.ttl_tables[key] = { uses_ttl: true, ttl_values: [] };
+      }
+      if (!result.ttl_tables[key].ttl_values.includes(ttlValue)) {
+        result.ttl_tables[key].ttl_values.push(ttlValue);
+      }
+    }
+  }
+
+  return result;
+};
+
 export const parseRowSizeInfo = (content: string): RowSizeInfo => {
   const lines = content.split('\n');
   const result: RowSizeInfo = {};
@@ -357,73 +473,9 @@ export const parseRowSizeInfo = (content: string): RowSizeInfo => {
   return result;
 };
 
-// --- File handlers ---
-
-interface FileWithText {
-  text(): Promise<string>;
-}
-
-export const handleTablestatsFile = async (file: FileWithText): Promise<TablestatsResult> => {
-  try {
-    const content = await file.text();
-    return parse_nodetool_tablestats(content);
-  } catch (error) {
-    console.error('Error parsing tablestats file:', error);
-    throw new Error('Failed to parse tablestats file');
-  }
-};
-
-export const handleSchemaFile = async (file: FileWithText | null, datacenter: string): Promise<SchemaInfo> => {
-  if (!file) throw new Error('No file selected');
-  try {
-    const content = await file.text();
-    if (!content) throw new Error('File is empty');
-    const parsedData = parse_cassandra_schema(content, datacenter);
-    if (!parsedData || Object.keys(parsedData).length === 0) {
-      throw new Error('No valid schema definitions found in file');
-    }
-    return parsedData;
-  } catch (error: unknown) {
-    console.error('Error parsing schema file:', error);
-    throw new Error(`Failed to parse schema file: ${(error as Error).message}`);
-  }
-};
-
-export const handleInfoFile = async (file: FileWithText | null): Promise<NodetoolInfoResult> => {
-  if (!file) throw new Error('No file selected');
-  try {
-    const content = await file.text();
-    if (!content) throw new Error('File is empty');
-    const parsedData = parseNodetoolInfo(content);
-    if (!parsedData?.uptime_seconds) {
-      throw new Error('No valid info data found in file');
-    }
-    return parsedData;
-  } catch (error: unknown) {
-    console.error('Error parsing info file:', error);
-    throw new Error(`Failed to parse info file: ${(error as Error).message}`);
-  }
-};
-
-export const handleRowSizeFile = async (file: FileWithText | null): Promise<RowSizeInfo> => {
-  if (!file) throw new Error('No file selected');
-  try {
-    const content = await file.text();
-    if (!content) throw new Error('File is empty');
-    const parsedData = parseRowSizeInfo(content);
-    if (!parsedData || Object.keys(parsedData).length === 0) {
-      throw new Error('No valid row size data found in file');
-    }
-    return parsedData;
-  } catch (error: unknown) {
-    console.error('Error parsing row size file:', error);
-    throw new Error(`Failed to parse row size file: ${(error as Error).message}`);
-  }
-};
-
 // --- File type detection ---
 
-export type CassandraFileType = 'tablestats' | 'status' | 'info' | 'rowsize' | 'schema' | 'tco' | 'unknown';
+export type CassandraFileType = 'tablestats' | 'status' | 'info' | 'rowsize' | 'schema' | 'tco' | 'prepared' | 'unknown';
 
 export interface CassandraFileScan {
   tablestats: string[];   // filenames (multiple nodes allowed)
@@ -432,6 +484,7 @@ export interface CassandraFileScan {
   rowsize: string | null;
   schema: string | null;
   tco: string | null;
+  prepared: string | null;
   unknown: string[];
 }
 
@@ -459,7 +512,25 @@ export const isTcoFile = (content: string): boolean => {
   }
 };
 
+// NDJSON (or cqlsh SELECT JSON) output of system.prepared_statements — any
+// line containing a JSON object with both `prepared_id` and `query_string`
+// keys counts as a match.
+export const isPreparedStatementsFile = (content: string): boolean => {
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj && typeof obj === 'object' && 'prepared_id' in obj && 'query_string' in obj) {
+        return true;
+      }
+    } catch { /* skip */ }
+  }
+  return false;
+};
+
 export const detectFileType = (content: string): CassandraFileType => {
+  if (isPreparedStatementsFile(content)) return 'prepared';
   if (isTablestatsFile(content)) return 'tablestats';
   if (isStatusFile(content)) return 'status';
   if (isInfoFile(content)) return 'info';
@@ -478,6 +549,7 @@ export const scanCassandraFiles = (files: Record<string, string>): CassandraFile
     rowsize: null,
     schema: null,
     tco: null,
+    prepared: null,
     unknown: [],
   };
 
@@ -489,6 +561,7 @@ export const scanCassandraFiles = (files: Record<string, string>): CassandraFile
       case 'rowsize':    result.rowsize ??= name; break;
       case 'schema':     result.schema  ??= name; break;
       case 'tco':        result.tco     ??= name; break;
+      case 'prepared':   result.prepared ??= name; break;
       default:           result.unknown.push(name); break;
     }
   }

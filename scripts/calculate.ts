@@ -7,7 +7,7 @@
  *
  * Usage:
  *   npx ts-node --require tsconfig-paths/register --project tsconfig.scripts.json \
- *     calculate.ts <region> <reads/s> <writes/s> <rowSizeBytes> <storageGB> [ttl/s] [pitr]
+ *     scripts/calculate.ts <region> <reads/s> <writes/s> <rowSizeBytes> <storageGB> [ttl/s] [pitr]
  */
 
 import {
@@ -18,9 +18,9 @@ import {
   type DatacenterRef,
   type EstimateResults,
   type PricingEstimateResult,
-} from 'src/utils/PricingFormulas';
+} from 'src/calculator/PricingFormulas';
 
-const regionsMap: Record<string, string> = require('src/data/regions.json');
+const regionsMap: Record<string, string> = require('src/calculator/data/regions.json');
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 

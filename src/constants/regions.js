@@ -1,4 +1,4 @@
-import pricingDataJson from '../data/mcs.json';
+import pricingDataJson from '../calculator/data/mcs.json';
 
 // Get all available regions from the pricing data
 export const awsRegions = Object.keys(pricingDataJson.regions)

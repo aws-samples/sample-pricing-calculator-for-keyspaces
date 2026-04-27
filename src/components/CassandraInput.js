@@ -11,11 +11,11 @@ import {
     Alert,
     Table
 } from '@cloudscape-design/components';
-import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parse_cassandra_schema_compatibility, parseRowSizeInfo, parseTCOInfo } from './ParsingHelpers';
-import { buildCassandraLocalSet, getKeyspaceCassandraAggregate } from '../utils/PricingFormulas';
-import CreatePDFReport from './CreatePDFReport';
+import { parseNodetoolStatus, parse_nodetool_tablestats, parseNodetoolInfo, parse_cassandra_schema, parse_cassandra_schema_compatibility, parseRowSizeInfo, parseTCOInfo, parse_prepared_statements } from '../calculator/ParsingHelpers';
+import { buildCassandraLocalSet, getKeyspaceCassandraAggregate } from '../calculator/PricingFormulas';
+import CreatePDFReport from '../calculator/CreatePDFReport';
 import { awsRegions } from '../constants/regions';
-import { calculatePricingEstimate } from '../utils/PricingFormulas';
+import { calculatePricingEstimate } from '../calculator/PricingFormulas';
 
 // Function to get region for a datacenter - can be used throughout the application
 export const getDatacenterRegion = (datacenterName, regionsMap) => {
@@ -45,7 +45,7 @@ const formatCurrency = (amount) => {
     return `$${Math.ceil(amount).toLocaleString()}`;
 };
 
-// pricing formulas moved to ../utils/PricingFormulas
+// pricing formulas moved to ../calculator/PricingFormulas
 
 
 
@@ -59,11 +59,13 @@ function CassandraInput({
     schemaData,
     rowSizeData,
     tcoData,
+    preparedData,
     tablestatsValidation,
     infoValidation,
     schemaValidation,
     rowSizeValidation,
     tcoValidation,
+    preparedValidation,
     estimateValidation,
     estimateResults,
     onStatusFileChange,
@@ -405,6 +407,32 @@ const ResultsTable = ({ results }) => {
             }
         }
 
+        // Validate Prepared Statements file specifically
+        if (fileType === 'prepared' && file) {
+            try {
+                const content = await file.text();
+                const parsedData = parse_prepared_statements(content);
+                console.log('Parsed prepared statements:', parsedData);
+
+                const lwt = parsedData.lwt_in_unlogged_batch.length;
+                const aggs = parsedData.aggregations.length;
+                const ttlTables = Object.keys(parsedData.ttl_tables).length;
+
+                const validation = {
+                    success: true,
+                    message: `Successfully parsed prepared statements. Detected ${lwt} LWT in unlogged batches, ${aggs} aggregation queries, ${ttlTables} table(s) with USING TTL.`
+                };
+                onFileChange(datacenter, fileType, file, parsedData, validation);
+            } catch (error) {
+                console.error(`Error parsing prepared statements file for ${datacenter}:`, error);
+                const validation = {
+                    success: false,
+                    message: `Error parsing file: ${error.message}`
+                };
+                onFileChange(datacenter, fileType, file, null, validation);
+            }
+        }
+
         // Validate TCO info file specifically
         if (fileType === 'tco' && file) {
             try {
@@ -466,7 +494,19 @@ const ResultsTable = ({ results }) => {
             //create a map of datacenters
            const statusData = new Map(datacenters.map(dc => [dc.name, dc.nodeCount]));
             console.log(samples);
-            const result = getKeyspaceCassandraAggregate(buildCassandraLocalSet(samples, statusData), datacenterName);
+
+            // If a prepared-statements file was uploaded for this datacenter,
+            // extract the set of tables that use `USING TTL` so pricing
+            // counts 100% of writes for those tables as TTL deletes.
+            const preparedForDc = preparedData?.[datacenterName];
+            const preparedTtlTables = preparedForDc?.ttl_tables
+                ? new Set(Object.keys(preparedForDc.ttl_tables))
+                : undefined;
+
+            const result = getKeyspaceCassandraAggregate(
+                buildCassandraLocalSet(samples, statusData, preparedTtlTables ? { preparedTtlTables } : undefined),
+                datacenterName
+            );
             console.log('Estimation result:', result);
             
             // Call the parent handler
@@ -512,10 +552,15 @@ const ResultsTable = ({ results }) => {
 
         const pricing = calculatePricingEstimate(datacenters, regions, estimateResults);
 
-        // Gather compatibility data from schema files
+        // Gather compatibility data from schema files (and optionally prepared statements)
         let compatibilityData = null;
         try {
-            const mergedCompat = { functions: 0, aggregates: 0, keyspaces: {} };
+            const mergedCompat = {
+                functions: 0,
+                aggregates: 0,
+                keyspaces: {},
+                queryPatterns: { lwtInUnloggedBatch: [], aggregations: [] }
+            };
             for (const dc of datacenters) {
                 const files = datacenterFiles[dc.name];
                 const schemaFile = files?.schema;
@@ -536,6 +581,16 @@ const ResultsTable = ({ results }) => {
                         }
                     }
                 }
+
+                const prepared = preparedData?.[dc.name];
+                if (prepared) {
+                    if (Array.isArray(prepared.lwt_in_unlogged_batch)) {
+                        mergedCompat.queryPatterns.lwtInUnloggedBatch.push(...prepared.lwt_in_unlogged_batch);
+                    }
+                    if (Array.isArray(prepared.aggregations)) {
+                        mergedCompat.queryPatterns.aggregations.push(...prepared.aggregations);
+                    }
+                }
             }
             compatibilityData = mergedCompat;
         } catch (error) {
@@ -546,7 +601,7 @@ const ResultsTable = ({ results }) => {
         pdfReport.createReport(datacenters, regions, estimateResults, pricing, tcoData, compatibilityData);
     };
 
-    // Calculate pricing estimate now imported from ../utils/PricingFormulas
+    // Calculate pricing estimate now imported from ../calculator/PricingFormulas
     
     // Pricing Estimate Component
     const PricingEstimate = () => {
@@ -809,7 +864,7 @@ const ResultsTable = ({ results }) => {
 
                                         <FormField
                                             label="Row Size Sampler File"
-                                            description={<p>Upload the row size sampler output file for this datacenter. The script is available here. <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/row-size-sampler.sh' target='_blank' rel='noopener noreferrer'>row-size-sampler.sh</a></p>}
+                                            description={<p>Upload the row size sampler output file for this datacenter. The script is available here. <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/tools/row-size-sampler.sh' target='_blank' rel='noopener noreferrer'>row-size-sampler.sh</a></p>}
                                         >
                                             <FileUpload
                                                 onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'rowSize', detail)}
@@ -828,8 +883,29 @@ const ResultsTable = ({ results }) => {
                                         </FormField>
 
                                         <FormField
+                                            label="Prepared Statements File"
+                                            description={<p>Upload prepared statements. The prepared statements sampler script is available here: <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/tools/prepared-statements-sampler.sh' target='_blank' rel='noopener noreferrer'>prepared-statements-sampler.sh</a> for compatibility checks on CQL queries  </p> }
+                                        >
+                                            <FileUpload
+                                                onChange={(detail) => handleDatacenterFileChange(datacenter.name, 'prepared', detail)}
+                                                value={datacenterFiles[datacenter.name]?.prepared ? [datacenterFiles[datacenter.name].prepared] : []}
+                                                i18nStrings={fileUploadI18nStrings}
+                                                constraintText="Optional. Upload an NDJSON file of system.prepared_statements"
+                                            />
+                                            {preparedValidation && preparedValidation[datacenter.name] && (
+                                                <Alert
+                                                    type={preparedValidation[datacenter.name].success ? "success" : "error"}
+                                                    header={preparedValidation[datacenter.name].success ? "Validation Successful" : "Validation Failed"}
+                                                >
+                                                    {preparedValidation[datacenter.name].message}
+                                                </Alert>
+                                            )}
+                                        </FormField>
+
+
+                                        <FormField
                                             label="TCO Info File"
-                                            description={<p>Upload the TCO (Total Cost of Ownership) Info JSON file containing node and operations cost data. The script can be found here <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/cassandra_tco_helper.py' target='_blank' rel='noopener noreferrer'>cassandra-tco-helper.py</a></p>}
+                                            description={<p>Upload the TCO (Total Cost of Ownership) Info JSON file containing node and operations cost data. The script can be found here <a href='https://raw.githubusercontent.com/aws-samples/sample-pricing-calculator-for-keyspaces/refs/heads/main/tools/cassandra_tco_helper.py' target='_blank' rel='noopener noreferrer'>cassandra-tco-helper.py</a></p>}
                                            
                                         >
                                             <FileUpload
@@ -848,6 +924,7 @@ const ResultsTable = ({ results }) => {
                                             )}
                                         </FormField>
 
+                                        
                                         <Box textAlign="center">
                                             <Button
                                                 variant="primary"
