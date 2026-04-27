@@ -66,6 +66,7 @@ For modes **1, 2, and 4**, a **written PDF report** is optional; the agent usual
 
 ## Prerequisites
 - **Node.js (optional)** – if you are running a local web app or CLI tool that uses JavaScript.
+- **Python 3 (optional)** – for [`cassandra_benchmark.py`](cassandra_benchmark.py). Connecting to Amazon Keyspaces with SigV4 and TLS can use the repository’s public CA files **`AmazonRootCA1.pem`** (Amazon Root CA 1) and **`sf-class2-root.crt`** (Starfield Class 2) as `--ssl-certfile` (see the script’s examples).
 - **AWS Account** – to reference or verify costs with the official [AWS Keyspaces pricing page](https://aws.amazon.com/keyspaces/pricing/).  
 - **Web Browser** – if you are running this as a static web app.
 
