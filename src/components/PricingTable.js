@@ -127,7 +127,7 @@ function PricingTable({ provisionedPricing, onDemandPricing, formData, selectedR
       onDemandStrong: calculateTotal(onDemandPricing || {}, 'strong'),
       onDemandEventual: calculateTotal(onDemandPricing || {}, 'eventual')
     },
-     { metric: "Monthly total (Database Svaings Plan)", 
+     { metric: "Monthly total (Database Savings Plan)", 
       provisionedStrong: calculateSavingsTotal(provisionedPricing || {}, 'strong'),
       provisionedEventual: calculateSavingsTotal(provisionedPricing || {}, 'eventual'),
       onDemandStrong: calculateSavingsTotal(onDemandPricing || {}, 'strong'),
