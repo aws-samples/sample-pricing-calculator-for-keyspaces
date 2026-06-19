@@ -2,12 +2,13 @@
 
 Invoke the `amazon-keyspaces-skill` skill (`.claude/skills/amazon-keyspaces-skill/SKILL.md`) and follow its instructions.
 
-The skill supports four modes:
+The skill supports five modes:
 
 1. **Manual inputs** — user provides region, reads/s, writes/s, row size, storage, TTL, and PITR.
 2. **Cassandra diagnostic files** — user provides `nodetool` output, schema, or a directory to scan. When a schema is present, a compatibility report is included alongside the pricing.
 3. **Compatibility check** — user provides a Cassandra CQL schema (file or pasted) and wants to know what features won't work on Amazon Keyspaces.
 4. **SQL → Keyspaces translation** — user provides SQL DDL; the skill prices 3 data-model strategies.
+5. **Connection / driver configuration** — user asks about or shares an Apache Cassandra driver config for connecting to Amazon Keyspaces; the skill reviews or advises (no scripts).
 
 Arguments (optional, passed through to Mode 1): `[region] [reads/s] [writes/s] [row-size-bytes] [storage-gb] [ttl/s] [pitr]`
 
