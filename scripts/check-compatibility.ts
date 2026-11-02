@@ -32,6 +32,7 @@ import fs from 'fs';
 import {
   parse_cassandra_schema_compatibility,
   parse_prepared_statements,
+  parseRowSizeInfo,
   type CompatibilityInfo,
   type QueryPatternsInfo,
 } from 'src/calculator/ParsingHelpers';
@@ -39,15 +40,17 @@ import {
 interface Args {
   schema: string | null;
   prepared: string | null;
+  rowsize: string | null;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { schema: null, prepared: null };
+  const args: Args = { schema: null, prepared: null, rowsize: null };
   let i = 0;
   while (i < argv.length) {
     switch (argv[i]) {
       case '--schema':   args.schema   = argv[++i]; break;
       case '--prepared': args.prepared = argv[++i]; break;
+      case '--rowsize':  args.rowsize  = argv[++i]; break;
     }
     i++;
   }
@@ -65,11 +68,13 @@ function readStdinSync(): string {
 function summarizeSchema(details: CompatibilityInfo) {
   let total_table_issues = 0;
   let tables_affected = 0;
+  let short_column_names = 0;
   const keyspaces_affected = Object.keys(details.keyspaces).length;
 
   for (const tables of Object.values(details.keyspaces)) {
     for (const issue of Object.values(tables)) {
-      const count = issue.indexes.length + issue.triggers.length + issue.materializedViews.length;
+      const count = issue.indexes.length + issue.triggers.length + issue.materializedViews.length + issue.shortColumnNames.length;
+      short_column_names += issue.shortColumnNames.length;
       if (count > 0) {
         tables_affected++;
         total_table_issues += count;
@@ -77,7 +82,9 @@ function summarizeSchema(details: CompatibilityInfo) {
     }
   }
 
-  const total_issues = total_table_issues + details.functions + details.aggregates;
+  const udt_issues_count = details.udt_quotas?.issues.reduce((sum, u) => sum + u.issues.length, 0) ?? 0;
+  const row_size_issues_count = details.row_size_issues.length;
+  const total_issues = total_table_issues + details.functions + details.aggregates + udt_issues_count + row_size_issues_count;
 
   return {
     total_issues,
@@ -85,6 +92,9 @@ function summarizeSchema(details: CompatibilityInfo) {
     tables_affected,
     functions: details.functions,
     aggregates: details.aggregates,
+    short_column_names,
+    udt_quota_issues: udt_issues_count,
+    row_size_issues: row_size_issues_count,
   };
 }
 
@@ -121,15 +131,25 @@ function main() {
     }
   }
 
+  let rowSizeContent: string | null = null;
+  if (args.rowsize) {
+    try { rowSizeContent = fs.readFileSync(args.rowsize, 'utf8'); }
+    catch (err: unknown) {
+      console.error(`Failed to read rowsize file: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  }
+
   if (!schemaContent && !preparedContent) {
-    console.error('Usage: check-compatibility.ts [--schema <path>] [--prepared <path>]');
+    console.error('Usage: check-compatibility.ts [--schema <path>] [--prepared <path>] [--rowsize <path>]');
     console.error('       cat schema.cql | check-compatibility.ts');
     process.exit(1);
   }
 
   // Schema-driven findings
+  const rowSizeData = rowSizeContent ? parseRowSizeInfo(rowSizeContent) : undefined;
   const schemaDetails: CompatibilityInfo | null = schemaContent
-    ? parse_cassandra_schema_compatibility(schemaContent)
+    ? parse_cassandra_schema_compatibility(schemaContent, rowSizeData)
     : null;
 
   // Prepared-statement findings

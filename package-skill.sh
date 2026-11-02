@@ -33,8 +33,9 @@ echo "  [1/7] Claude skill"
 mkdir -p "${STAGING}/.claude/skills"
 cp -R .claude/skills/amazon-keyspaces-skill "${STAGING}/.claude/skills/"
 
-# --- 2. Kiro skill --------------------------------------------------------
+# --- 2. Kiro skill (regenerated from the Claude skill) ---------------------
 echo "  [2/7] Kiro skill"
+./tools/sync-kiro-skill.sh >/dev/null
 mkdir -p "${STAGING}/.kiro/skills"
 cp -R .kiro/skills/amazon-keyspaces-skill "${STAGING}/.kiro/skills/"
 
@@ -45,6 +46,8 @@ cp scripts/calculate.ts \
    scripts/generate-pdf.ts \
    scripts/parse-cassandra.ts \
    scripts/check-compatibility.ts \
+   scripts/generate-cfn.ts \
+   scripts/estimate-workload.ts \
    "${STAGING}/scripts/"
 
 # tools/ — sampler shell scripts and helpers referenced by SKILL.md
@@ -74,7 +77,9 @@ cat > "${STAGING}/package.json" <<'EOF'
     "calculate": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/calculate.ts",
     "parse-cassandra": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/parse-cassandra.ts",
     "generate-pdf": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/generate-pdf.ts",
-    "check-compatibility": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/check-compatibility.ts"
+    "check-compatibility": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/check-compatibility.ts",
+    "generate-cfn": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/generate-cfn.ts",
+    "estimate-workload": "ts-node --require tsconfig-paths/register --project tsconfig.scripts.json scripts/estimate-workload.ts"
   },
   "dependencies": {
     "jspdf": "^2.5.2",
@@ -115,6 +120,8 @@ scripts/
   parse-cassandra.ts       # Mode 2: Cassandra diagnostic files
   check-compatibility.ts   # Mode 3: schema + prepared-statement compatibility
   generate-pdf.ts          # PDF report generator
+  generate-cfn.ts          # CloudFormation template for the target Keyspaces data model
+  estimate-workload.ts     # Workload spec (any database / SQL model option) → estimate
 tools/
   get-pricing.sh                  # Refresh src/calculator/data/* from AWS APIs
   row-size-sampler.sh             # Sampler: per-table average row size
@@ -125,6 +132,7 @@ src/calculator/         # Framework-agnostic pricing core
   PricingData.js
   ParsingHelpers.ts
   CreatePDFReport.ts
+  CloudFormationGenerator.ts
   Constants.js
   index.ts
   data/                 # mcs.json, regions.json, savings-plans.json

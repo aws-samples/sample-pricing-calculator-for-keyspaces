@@ -1,0 +1,5 @@
+vendor/
+skills/
+.venv/
+__pycache__/
+.pytest_cache/

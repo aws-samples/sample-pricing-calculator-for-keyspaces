@@ -1,0 +1,4 @@
+{"prepared_id": "0x5d8c0df41f43c04a6bb1fdd03dfd107e", "logged_keyspace": "keyspace1", "query_string": "SELECT \\"C0\\",\\"C1\\",\\"C2\\",\\"C3\\",\\"C4\\" FROM \\"standard1\\" WHERE KEY=?"}
+{"prepared_id": "0xe1d2f4aa887d02751110f92a52de4f20", "logged_keyspace": "keyspace1", "query_string": "UPDATE \\"standard1\\" SET \\"C0\\" = ?,\\"C1\\" = ?,\\"C2\\" = ?,\\"C3\\" = ?,\\"C4\\" = ? WHERE KEY=?"}
+{"prepared_id": "0x374aee8e86020ad655e57915a37ee52c", "logged_keyspace": null, "query_string": "SELECT \\"C0\\",\\"C1\\",\\"C2\\",\\"C3\\",\\"C4\\" FROM \\"standard1\\" WHERE KEY=?"}
+{"prepared_id": "0x12570db0cfe94bf70492efe75c9e9662", "logged_keyspace": null, "query_string": "UPDATE \\"standard1\\" SET \\"C0\\" = ?,\\"C1\\" = ?,\\"C2\\" = ?,\\"C3\\" = ?,\\"C4\\" = ? WHERE KEY=?"}

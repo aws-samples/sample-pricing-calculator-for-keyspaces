@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "aws-transform-agent-toolkit": {
+      "command": "uvx",
+      "args": ["--from", "agent-builder-mcp-aws-transform>=1.0.0", "agent-builder-mcp"],
+      "env": { "AWS_REGION": "us-east-1" }
+    },
+    "awslabs.aws-transform-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.aws-transform-mcp-server@latest"]
+    }
+  }
+}

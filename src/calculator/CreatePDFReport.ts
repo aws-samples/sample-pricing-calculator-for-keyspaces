@@ -82,6 +82,9 @@ interface TcoEntry {
 
 export type TcoData = Record<string, TcoEntry> | null;
 
+/** Single sampled node/cluster JSON from `cassandra_tco_helper.py` applied to all nodes. */
+export const TCO_CLUSTER_KEY = '_cluster';
+
 export interface Estimate {
     label: string;
     datacenters: Datacenter[];
@@ -90,6 +93,7 @@ export interface Estimate {
     pricing: Pricing;
     tcoData?: TcoData;
     compatibilityData?: CompatibilityData | null;
+    statusDcCount?: number;
 }
 
 interface TableCompatibilityIssue {
@@ -110,6 +114,83 @@ export interface CompatibilityData {
     queryPatterns?: {
         lwtInUnloggedBatch: QueryPatternIssueRef[];
         aggregations: QueryPatternIssueRef[];
+    };
+}
+
+interface TcoRollupResult {
+    instanceCost: number;
+    storageCost: number;
+    backupCost: number;
+    networkCost: number;
+    licenseCost: number;
+    operationsCost: number;
+    totalMonthly: number;
+    totalNodes: number;
+    clusterSampleMode: boolean;
+}
+
+function rollupCassandraTco(tcoData: TcoData, datacenters: Datacenter[]): TcoRollupResult | null {
+    if (!tcoData) return null;
+    const totalNodes = datacenters.reduce((s, d) => s + (d.nodeCount || 0), 0);
+    const clusterEntry = tcoData[TCO_CLUSTER_KEY];
+
+    if (clusterEntry?.single_node && totalNodes >= 0) {
+        const sn = clusterEntry.single_node;
+        const instanceCost = (sn.instance?.monthly_cost ?? 0) * totalNodes;
+        const storageCost = (sn.storage?.monthly_cost ?? 0) * totalNodes;
+        const backupCost = (sn.backup?.monthly_cost ?? 0) * totalNodes;
+        const networkCost =
+            ((sn.network_out?.monthly_cost ?? 0) + (sn.network_in?.monthly_cost ?? 0)) * totalNodes;
+        const licenseCost = (sn.license?.monthly_cost ?? 0) * totalNodes;
+        const operationsCost = clusterEntry.operations?.operator_hours?.monthly_cost ?? 0;
+        const totalMonthly =
+            instanceCost + storageCost + backupCost + networkCost + licenseCost + operationsCost;
+        return {
+            instanceCost,
+            storageCost,
+            backupCost,
+            networkCost,
+            licenseCost,
+            operationsCost,
+            totalMonthly,
+            totalNodes,
+            clusterSampleMode: true,
+        };
+    }
+
+    let instanceCost = 0;
+    let storageCost = 0;
+    let backupCost = 0;
+    let networkCost = 0;
+    let licenseCost = 0;
+    let operationsCost = 0;
+
+    for (const dc of datacenters) {
+        const t = tcoData[dc.name];
+        if (!t?.single_node) continue;
+        const n = dc.nodeCount || 0;
+        const sn = t.single_node;
+        instanceCost += (sn.instance?.monthly_cost ?? 0) * n;
+        storageCost += (sn.storage?.monthly_cost ?? 0) * n;
+        backupCost += (sn.backup?.monthly_cost ?? 0) * n;
+        networkCost += ((sn.network_out?.monthly_cost ?? 0) + (sn.network_in?.monthly_cost ?? 0)) * n;
+        licenseCost += (sn.license?.monthly_cost ?? 0) * n;
+        operationsCost += t.operations?.operator_hours?.monthly_cost ?? 0;
+    }
+
+    const totalMonthly = instanceCost + storageCost + backupCost + networkCost + licenseCost + operationsCost;
+    if (totalMonthly === 0 && totalNodes === 0) return null;
+
+    return {
+        instanceCost,
+        storageCost,
+        backupCost,
+        networkCost,
+        licenseCost,
+        operationsCost,
+        totalMonthly,
+        totalNodes,
+        clusterSampleMode: false,
     };
 }
 
@@ -161,19 +242,21 @@ class CreatePDFReport {
         estimateResults: EstimateResults,
         pricing: Pricing,
         tcoData: TcoData,
-        compatibilityData?: CompatibilityData | null
+        compatibilityData?: CompatibilityData | null,
+        statusDcCount?: number
     ): void {
         this.doc = new jsPDF();
         this.yPosition = 20;
         this.xPosition = 20;
 
         this.addTitle();
-        this.addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData);
+        this.addExecutiveSummary(datacenters, regions, estimateResults, pricing, tcoData, statusDcCount);
         this.addIntroduction();
         this.customerQuote();
         this.addCostSummary(pricing);
         this.addResultsTables(datacenters, regions, estimateResults);
         this.addPricingTables(pricing);
+        this.addKeyspaceCostPivotByDatacenter(pricing, datacenters.map((d) => d.name));
         this.addAssumptions();
         this.addCassandraTCOSection(datacenters, tcoData);
         this.addCompatibilitySection(compatibilityData ?? null);
@@ -207,6 +290,7 @@ class CreatePDFReport {
             this.addEstimateHeader(est.label, idx + 1, estimates.length);
             this.addResultsTables(est.datacenters, est.regions, est.estimateResults);
             this.addPricingTables(est.pricing);
+            this.addKeyspaceCostPivotByDatacenter(est.pricing, est.datacenters.map((d) => d.name));
             this.addCompatibilitySection(est.compatibilityData ?? null);
         });
 
@@ -326,7 +410,8 @@ class CreatePDFReport {
         regions: Regions,
         estimateResults: EstimateResults,
         pricing: Pricing,
-        tcoData: TcoData
+        tcoData: TcoData,
+        statusDcCount?: number
     ): void {
         if (!pricing) return;
 
@@ -356,33 +441,15 @@ class CreatePDFReport {
                 dcTotal + data.reads_per_second, 0);
         }, 0);
 
-        let totalCassandraTCO = 0;
-        let instanceCost = 0;
-        let storageCost = 0;
-        let backupCost = 0;
-        let networkCost = 0;
-        let operationsCost = 0;
-        let totalNodeCost = 0;
-        let licenseCost = 0;
-        if (tcoData) {
-            datacenters.forEach(dc => {
-                const tco = tcoData[dc.name];
-                if (!tco) return;
-
-                instanceCost += (tco.single_node?.instance?.monthly_cost || 0) * dc.nodeCount;
-                storageCost += (tco.single_node?.storage?.monthly_cost || 0) * dc.nodeCount;
-                backupCost += (tco.single_node?.backup?.monthly_cost || 0) * dc.nodeCount;
-                const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
-                const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
-                networkCost += (networkOutCost + networkInCost) * dc.nodeCount;
-                licenseCost += (tco.single_node?.license?.monthly_cost || 0) * dc.nodeCount;
-
-                const perNodeCost = instanceCost + storageCost + backupCost + networkCost;
-                totalNodeCost += perNodeCost;
-                operationsCost += tco.operations?.operator_hours?.monthly_cost || 0;
-            });
-        }
-        totalCassandraTCO = totalNodeCost + operationsCost;
+        const totalCassandraNodes = datacenters.reduce((s, d) => s + (d.nodeCount || 0), 0);
+        const tcoRoll = rollupCassandraTco(tcoData, datacenters);
+        const instanceCost = tcoRoll?.instanceCost ?? 0;
+        const storageCost = tcoRoll?.storageCost ?? 0;
+        const backupCost = tcoRoll?.backupCost ?? 0;
+        const networkCost = tcoRoll?.networkCost ?? 0;
+        const licenseCost = tcoRoll?.licenseCost ?? 0;
+        const operationsCost = tcoRoll?.operationsCost ?? 0;
+        const totalCassandraTCO = tcoRoll?.totalMonthly ?? 0;
 
         const summaryContent = `This report provides a comprehensive pricing estimate for migrating your Apache Cassandra workload to Amazon Keyspaces (for Apache Cassandra).`;
 
@@ -393,7 +460,8 @@ class CreatePDFReport {
         this.yPosition += 5;
 
         const keyDetails =
-            `        • Total Datacenters: ${datacenters.length}
+            `        • Total Datacenters: ${statusDcCount ?? datacenters.length}
+        • Total Cassandra nodes (all datacenters): ${totalCassandraNodes}
         • Total Keyspaces: ${totalKeyspaces}
         • Total Live Storage: ${Math.round(totalStorageGB)} GB
         • Total Write Operations: ${Math.round(totalWritesPerSecond)} per second
@@ -418,6 +486,9 @@ class CreatePDFReport {
 
         if (totalCassandraTCO === 0) {
             infrastructureContent = `TCO data was not provided. Check file and upload section to add the total cost of ownership details.`;
+        } else if (tcoRoll?.clusterSampleMode) {
+            infrastructureContent +=
+                `\n\n        Note: Per-node TCO from a single sample × ${totalCassandraNodes} total nodes across all datacenters; operations cost included once.`;
         }
 
         this.addSubSection("Self-managed Cassandra cost estimate:", infrastructureContent, {
@@ -586,8 +657,83 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         });
     }
 
+    private addKeyspaceCostPivotByDatacenter(pricing: Pricing, datacenterOrder: string[]): void {
+        if (!pricing?.total_datacenter_cost) return;
+        const dcNames = datacenterOrder.filter((dc) => pricing.total_datacenter_cost[dc]);
+        if (dcNames.length <= 1) return;
+
+        const ksSet = new Set<string>();
+        for (const dc of dcNames) {
+            const costs = pricing.total_datacenter_cost[dc]?.keyspaceCosts;
+            if (!costs) continue;
+            for (const k of Object.keys(costs)) {
+                if (k !== 'totals') ksSet.add(k);
+            }
+        }
+        const ksNames = Array.from(ksSet).sort();
+        if (ksNames.length === 0) return;
+
+        if (this.yPosition > 220) {
+            this.doc.addPage();
+            this.yPosition = 20;
+        }
+
+        const head = [
+            'Keyspace',
+            ...dcNames.flatMap((dc) => [`${dc} OD`, `${dc} Prov`]),
+            'Σ OD',
+            'Σ Prov',
+        ];
+        const body: string[][] = [];
+        for (const ks of ksNames) {
+            let sumOd = 0;
+            let sumPv = 0;
+            const row: string[] = [ks];
+            for (const dc of dcNames) {
+                const c = pricing.total_datacenter_cost[dc]?.keyspaceCosts[ks];
+                const od = c?.on_demand_total ?? 0;
+                const pv = c?.provisioned_total ?? 0;
+                sumOd += od;
+                sumPv += pv;
+                row.push(formatCurrency(od), formatCurrency(pv));
+            }
+            row.push(formatCurrency(sumOd), formatCurrency(sumPv));
+            body.push(row);
+        }
+
+        this.addSection(
+            'Keyspaces cost by datacenter (summary matrix)',
+            'On-demand (OD) and provisioned monthly totals per keyspace, by datacenter. See preceding sections for full per-DC line-item tables.',
+            { addPageAfter: false }
+        );
+
+        const colStyles: Record<number, { cellWidth: number }> = { 0: { cellWidth: 28 } };
+        let col = 1;
+        for (let i = 0; i < dcNames.length; i++) {
+            colStyles[col++] = { cellWidth: 16 };
+            colStyles[col++] = { cellWidth: 16 };
+        }
+        colStyles[col++] = { cellWidth: 17 };
+        colStyles[col] = { cellWidth: 17 };
+
+        this.doc.autoTable({
+            startY: this.yPosition,
+            head: [head],
+            body,
+            theme: 'grid',
+            headStyles: { fillColor: [66, 139, 202] },
+            styles: { fontSize: 6 },
+            columnStyles: colStyles,
+        });
+
+        this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 15;
+    }
+
     private addCassandraTCOSection(datacenters: Datacenter[], tcoData: TcoData): void {
         if (!tcoData || !datacenters || datacenters.length === 0) return;
+
+        const roll = rollupCassandraTco(tcoData, datacenters);
+        if (!roll || roll.totalMonthly <= 0) return;
 
         if (this.yPosition > 200) {
             this.doc.addPage();
@@ -595,35 +741,38 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
         }
 
         const sectionTitle = 'Cassandra TCO (Total Cost of Ownership)';
-        const sectionDescription = 'The following table shows the current Cassandra infrastructure costs per datacenter. Costs are calculated per node and multiplied by the total number of nodes in each datacenter.';
+        let sectionDescription = 'Self-managed Cassandra infrastructure and operations estimates.';
+        if (roll.clusterSampleMode) {
+            sectionDescription += ` Single per-node TCO sample is scaled by **${roll.totalNodes} total nodes** (all datacenters, from cluster topology). Operations cost is included once.`;
+        } else {
+            sectionDescription +=
+                ' Costs use per-datacenter node counts multiplied by each datacenter\'s per-node TCO (where provided).';
+        }
 
-        this.addSection(sectionTitle, sectionDescription, {
-            addPageAfter: false
+        this.addSection(sectionTitle, sectionDescription.replace(/\*\*/g, ''), {
+            addPageAfter: false,
         });
 
         const tcoTableData: string[][] = [];
         let totalTCO = 0;
 
-        datacenters.forEach(dc => {
-            const tco = tcoData[dc.name];
-            if (!tco) return;
-
-            const instanceCost = tco.single_node?.instance?.monthly_cost || 0;
-            const storageCost = tco.single_node?.storage?.monthly_cost || 0;
-            const backupCost = tco.single_node?.backup?.monthly_cost || 0;
-            const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
-            const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
-            const networkCost = networkOutCost + networkInCost;
-            const licenseCost = tco.single_node?.license?.monthly_cost || 0;
+        if (roll.clusterSampleMode && tcoData[TCO_CLUSTER_KEY]?.single_node) {
+            const tco = tcoData[TCO_CLUSTER_KEY]!;
+            const sn = tco.single_node!;
+            const instanceCost = sn.instance?.monthly_cost || 0;
+            const storageCost = sn.storage?.monthly_cost || 0;
+            const backupCost = sn.backup?.monthly_cost || 0;
+            const networkCost =
+                (sn.network_out?.monthly_cost || 0) + (sn.network_in?.monthly_cost || 0);
+            const licenseCost = sn.license?.monthly_cost || 0;
             const perNodeCost = instanceCost + storageCost + backupCost + networkCost + licenseCost;
-            const totalNodeCost = perNodeCost * dc.nodeCount;
+            const totalNodeCost = perNodeCost * roll.totalNodes;
             const operationsCost = tco.operations?.operator_hours?.monthly_cost || 0;
-            const datacenterTCO = totalNodeCost + operationsCost;
-            totalTCO += datacenterTCO;
+            totalTCO = totalNodeCost + operationsCost;
 
             tcoTableData.push([
-                dc.name,
-                dc.nodeCount.toString(),
+                'Cluster (sample × total nodes)',
+                roll.totalNodes.toString(),
                 formatCurrency(instanceCost),
                 formatCurrency(storageCost),
                 formatCurrency(backupCost),
@@ -632,11 +781,42 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 formatCurrency(perNodeCost),
                 formatCurrency(totalNodeCost),
                 formatCurrency(operationsCost),
-                formatCurrency(datacenterTCO)
+                formatCurrency(totalTCO),
             ]);
-        });
+        } else {
+            datacenters.forEach((dc) => {
+                const tco = tcoData[dc.name];
+                if (!tco) return;
 
-        if (tcoTableData.length === 0) return;
+                const instanceCost = tco.single_node?.instance?.monthly_cost || 0;
+                const storageCost = tco.single_node?.storage?.monthly_cost || 0;
+                const backupCost = tco.single_node?.backup?.monthly_cost || 0;
+                const networkOutCost = tco.single_node?.network_out?.monthly_cost || 0;
+                const networkInCost = tco.single_node?.network_in?.monthly_cost || 0;
+                const networkCost = networkOutCost + networkInCost;
+                const licenseCost = tco.single_node?.license?.monthly_cost || 0;
+                const perNodeCost = instanceCost + storageCost + backupCost + networkCost + licenseCost;
+                const totalNodeCost = perNodeCost * dc.nodeCount;
+                const operationsCost = tco.operations?.operator_hours?.monthly_cost || 0;
+                const datacenterTCO = totalNodeCost + operationsCost;
+                totalTCO += datacenterTCO;
+
+                tcoTableData.push([
+                    dc.name,
+                    dc.nodeCount.toString(),
+                    formatCurrency(instanceCost),
+                    formatCurrency(storageCost),
+                    formatCurrency(backupCost),
+                    formatCurrency(networkCost),
+                    formatCurrency(licenseCost),
+                    formatCurrency(perNodeCost),
+                    formatCurrency(totalNodeCost),
+                    formatCurrency(operationsCost),
+                    formatCurrency(datacenterTCO),
+                ]);
+            });
+            if (tcoTableData.length === 0) return;
+        }
 
         this.doc.autoTable({
             startY: this.yPosition,
@@ -655,8 +835,8 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
                 6: { cellWidth: 18 },
                 7: { cellWidth: 20 },
                 8: { cellWidth: 18 },
-                9: { cellWidth: 20 }
-            }
+                9: { cellWidth: 20 },
+            },
         });
 
         this.yPosition = (this.doc.lastAutoTable.finalY ?? this.yPosition) + 15;
@@ -666,9 +846,14 @@ With 99.999% availability SLA, the ability to double capacity in under 30 minute
             this.yPosition = 20;
         }
 
+        const totalNodesAll = datacenters.reduce((s, d) => s + (d.nodeCount || 0), 0);
         this.doc.setFontSize(12);
         this.doc.setFont('helvetica', 'bold');
-        this.doc.text(`Self managed Cassandra Total Ownership Cost (All Datacenters): ${formatCurrency(totalTCO)}/month`, this.xPosition, this.yPosition);
+        this.doc.text(
+            `Self managed Cassandra Total Ownership Cost (All Datacenters): ${formatCurrency(roll.totalMonthly)}/month — ${totalNodesAll} total nodes`,
+            this.xPosition,
+            this.yPosition
+        );
         this.yPosition += 15;
     }
 

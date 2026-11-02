@@ -13,4 +13,9 @@ export const SECONDS_PER_MONTH = (365/12) * (24 * 60 * 60);
 
 export const GIGABYTE = 1024 * 1024 * 1024;
 
-
+/**
+ * Default target utilization for provisioned capacity: the Amazon Keyspaces auto scaling default (70%).
+ * Provisioned capacity is sized as steady-state demand ÷ target utilization, leaving 30% headroom.
+ * Keyspaces accepts targets from 20% to 90%.
+ */
+export const DEFAULT_TARGET_UTILIZATION = 0.70;
