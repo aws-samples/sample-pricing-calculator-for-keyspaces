@@ -1,0 +1,95 @@
+{
+  "shortDescription": "Evaluates Apache Cassandra workloads for migration to Amazon Keyspaces: monthly cost, compatibility, and functional readiness.",
+  "monitoringType": "HEALTHCHECK",
+  "notificationsEnabled": "DISABLED",
+  "objectiveNegotiationPrompt": "",
+  "inputPayloadSchema": { "type": "object" },
+  "outputPayloadSchema": { "type": "object" },
+  "agentResiliencyConfiguration": {
+    "partnerControllerRetryWindowMinutes": 6,
+    "agentRecoveryConfiguration": { "recoveryWaitTimeSeconds": 60 }
+  },
+  "computeConfiguration": {
+    "provisionedComputeConfiguration": {
+      "agentCoreConfiguration": {
+        "atxAccessRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/AWSTransformAgentInvokeRole",
+        "runtimeArn": "<AGENTCORE_RUNTIME_ARN>",
+        "qualifier": "DEFAULT"
+      }
+    }
+  },
+  "agentCard": {
+    "id": "keyspaces-migration",
+    "name": "Keyspaces Migration",
+    "description": "Evaluates Apache Cassandra clusters, CQL schemas, and SQL data models for migration to Amazon Keyspaces. Estimates monthly cost (on-demand vs provisioned, savings plans, multi-Region, PITR, TTL, self-managed TCO), flags unsupported Cassandra features, generates the target Keyspaces CloudFormation data model, and produces a PDF report.",
+    "version": "1.0.0",
+    "defaultInputModes": ["text"],
+    "defaultOutputModes": ["text"],
+    "tags": ["keyspaces", "cassandra", "migration", "assessment", "pricing"],
+    "capabilities": {
+      "restartable": true,
+      "a2aSupported": true,
+      "legacyDashboard": false,
+      "legacyTaskLink": false,
+      "webAppV2": true,
+      "legacyRestartable": false,
+      "chatFileUpload": true,
+      "extensions": [
+        {
+          "name": "Agent Provider",
+          "description": "Agent publisher details",
+          "params": {
+            "name": "<PUBLISHER_NAME>",
+            "accountId": "<ACCOUNT_ID>",
+            "ownerType": "DIRECT_AGENT",
+            "contactInfo": [{ "type": "email", "value": "<OWNER_EMAIL>" }]
+          }
+        },
+        {
+          "name": "Agent Dependencies",
+          "description": "Runtime dependencies",
+          "params": { "agentDependencies": [], "requiredConnectorTypes": [] }
+        },
+        {
+          "name": "Agent Connectors",
+          "description": "Connector types used by this agent",
+          "params": { "connectors": [] }
+        },
+        {
+          "name": "Agent Code Repo",
+          "description": "Source repository for this agent",
+          "params": {
+            "codeUrl": "https://github.com/aws-samples/sample-pricing-calculator-for-keyspaces",
+            "branch": "main"
+          }
+        }
+      ]
+    },
+    "skills": [
+      {
+        "id": "keyspaces_cost_estimate",
+        "name": "Keyspaces cost estimate",
+        "description": "Monthly Amazon Keyspaces cost from manual workload inputs or nodetool diagnostics: on-demand vs provisioned, savings plans, multi-datacenter, PITR, TTL, and optional self-managed Cassandra TCO comparison.",
+        "tags": ["cost", "pricing"]
+      },
+      {
+        "id": "keyspaces_compatibility",
+        "name": "Keyspaces compatibility check",
+        "description": "Flags Cassandra features Amazon Keyspaces does not support (secondary indexes, triggers, materialized views, UDFs, UDAs, LWT in unlogged batches, aggregate queries) with what-to-do-instead guidance.",
+        "tags": ["compatibility", "assessment"]
+      },
+      {
+        "id": "keyspaces_functional_readiness",
+        "name": "Keyspaces functional readiness",
+        "description": "Generates the target Keyspaces data model as CloudFormation, reports TTL tables and multi-Region topology, and lists required application changes.",
+        "tags": ["data-model", "cloudformation"]
+      },
+      {
+        "id": "sql_to_keyspaces_modeling",
+        "name": "SQL to Keyspaces modeling",
+        "description": "Translates a relational SQL model into three Keyspaces modeling strategies, prices each, and recommends the best fit.",
+        "tags": ["data-model", "sql", "pricing"]
+      }
+    ]
+  }
+}

@@ -41,9 +41,11 @@ SYSTEMKEYSPACEFILTER='system\.\|system_schema\.\|system_traces\.\|system_auth\.\
 
 # cqlsh prints a header line, a divider of dashes, the rows, a blank line, and
 # "(N rows)". We keep only lines that look like a JSON object.
+# cqlsh also doubles every backslash when printing text, which turns the JSON escape \" into \\" and
+# breaks quoted identifiers ("C0"); the last sed expression undoes that doubling (an exact inverse).
 kqlsh "$@" -e "CONSISTENCY LOCAL_ONE; PAGING OFF; SELECT JSON * FROM system.prepared_statements;" \
   | awk '/^[[:space:]]*\{.*\}[[:space:]]*$/' \
-  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/\\\\/\\/g' \
   | grep -v "$SYSTEMKEYSPACEFILTER"
 
 echo 'fin!' 1>&2

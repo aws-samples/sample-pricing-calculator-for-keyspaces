@@ -1,0 +1,2 @@
+# Runtime deps beyond the AWS Transform SDK (installed separately in the Dockerfile).
+# strands-agents ships with agent-builder-sdk-aws-transform.

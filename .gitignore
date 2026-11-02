@@ -7,3 +7,6 @@ node_modules/
 keyspaces-pricing-estimate.pdf
 keyspaces-pricing-estimate_skill.pdf
 keyspaces-pricing-estimate_ui.pdf
+
+# Local Claude Code settings (per-user permissions and paths)
+.claude/settings.local.json

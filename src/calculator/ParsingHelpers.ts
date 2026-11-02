@@ -33,12 +33,32 @@ interface TableCompatibilityIssue {
   indexes: string[];
   triggers: string[];
   materializedViews: string[];
+  shortColumnNames: string[];
+}
+
+export interface UdtCompatibilityIssue {
+  name: string;
+  keyspace: string;
+  issues: string[];
+}
+
+export interface UdtQuotasSummary {
+  total_udts: number;
+  exceeds_region_limit: boolean;
+  issues: UdtCompatibilityIssue[];
+}
+
+export interface RowSizeIssue {
+  table: string;
+  max_bytes: number;
 }
 
 export interface CompatibilityInfo {
   functions: number;
   aggregates: number;
   keyspaces: Record<string, Record<string, TableCompatibilityIssue>>;
+  udt_quotas: UdtQuotasSummary | null;
+  row_size_issues: RowSizeIssue[];
 }
 
 // --- Prepared-statement compatibility types ---
@@ -112,6 +132,138 @@ export const parseNodetoolStatus = (content: string): Map<string, number> => {
 
   return datacenters;
 };
+
+/** Shared = one tablestats bundle scaled across all status datacenters; perDc = separate aggregation per DC. */
+export type CassandraBundleMode = 'shared' | 'perDc';
+
+/**
+ * Ensure every datacenter listed in `nodetool status` has at least one node entry for sampling math.
+ * Missing DCs get a synthetic node using template uptime from any existing info capture, else monthly default.
+ */
+export const mergeTopologyWithStatus = (
+  statusData: Map<string, number>,
+  nodesByDc: Map<string, Array<{ id: string; uptime_seconds: number }>>
+): void => {
+  const SECONDS_PER_MONTH = (365 / 12) * 86400;
+  let templateUptime = SECONDS_PER_MONTH;
+  for (const nodes of Array.from(nodesByDc.values())) {
+    if (nodes.length > 0) {
+      templateUptime = nodes[0].uptime_seconds;
+      break;
+    }
+  }
+  let synth = 0;
+  for (const dc of Array.from(statusData.keys())) {
+    const existing = nodesByDc.get(dc);
+    if (!existing || existing.length === 0) {
+      nodesByDc.set(dc, [{ id: `synthetic-${synth++}`, uptime_seconds: templateUptime }]);
+    }
+  }
+};
+
+/**
+ * Single classified tablestats path + multi-DC status → shared-bundle scale-factor workflow.
+ * More than one tablestats file → per-DC / per-node captures (no extra cluster-wide scale factor).
+ */
+export const inferCassandraBundleMode = (
+  statusData: Map<string, number>,
+  tablestatsPathCount: number
+): CassandraBundleMode => {
+  if (statusData.size <= 1) return 'perDc';
+  return tablestatsPathCount === 1 ? 'shared' : 'perDc';
+};
+
+/** Parse `dc1=100,dc2=200` into datacenter → reads/s. */
+export const parseReadsOverrideCsv = (raw: string): Map<string, number> => {
+  const out = new Map<string, number>();
+  for (const part of raw.split(',')) {
+    const seg = part.trim();
+    if (!seg) continue;
+    const eq = seg.indexOf('=');
+    if (eq <= 0) continue;
+    const dc = seg.slice(0, eq).trim();
+    const v = Number(seg.slice(eq + 1).trim());
+    if (!dc || Number.isNaN(v) || v < 0) continue;
+    out.set(dc, v);
+  }
+  return out;
+};
+
+/**
+ * Estimated bytes per column type, for SQL types (Mode 4 data models) and CQL types (Cassandra schemas).
+ * Same table as the skill's SQL type table; CQL types use the closest SQL size. `VARCHAR(n)` / `CHAR(n)` /
+ * `VARBINARY(n)` use n bytes. Collections, frozen types, tuples, UDTs and unknown types use 128 bytes.
+ */
+export const estimateColumnBytes = (columnType: string): number => {
+  const t = columnType.trim().toLowerCase();
+  const sized = t.match(/^(n?varchar|n?char|character varying|character|varbinary|binary)\s*\(\s*(\d+)\s*\)/);
+  if (sized) return Number(sized[2]);
+  if (/^(frozen|list|set|map|tuple)\s*</.test(t)) return 128;
+  const base = t.replace(/\s*\(.*$/, '').trim();
+  const sizes: Record<string, number> = {
+    bool: 1, boolean: 1, tinyint: 1, smallint: 2,
+    int: 4, integer: 4, serial: 4, date: 4, float: 4, real: 4,
+    bigint: 8, bigserial: 8, double: 8, 'double precision': 8, timestamp: 8, datetime: 8, time: 8,
+    counter: 8, decimal: 8, numeric: 8,
+    uuid: 16, timeuuid: 16, inet: 16, varint: 16, duration: 16,
+    text: 64, varchar: 64, nvarchar: 64, ascii: 64, clob: 64, 'character varying': 64,
+    blob: 512, binary: 512, varbinary: 512, bytea: 512,
+  };
+  return sizes[base] ?? 128;
+};
+
+/** CQL types use the same estimate (kept for callers that compare CQL rows, e.g. view vs base table). */
+export const estimateCqlColumnBytes = estimateColumnBytes;
+
+/** Estimated bytes for a row with these column types (sum of estimateColumnBytes). */
+export const estimateCqlRowBytes = (columnTypes: string[]): number =>
+  columnTypes.reduce((sum, t) => sum + estimateColumnBytes(t), 0);
+
+/** Materialized views in a schema: "ks.view" → "ks.base_table". */
+export const parseMaterializedViewBases = (schemaContent: string): Map<string, string> => {
+  const out = new Map<string, string>();
+  const mvPattern = /CREATE\s+MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?\."?(\w+)"?\s+AS\s+SELECT\s+[\s\S]*?\s+FROM\s+"?(\w+)"?\."?(\w+)"?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = mvPattern.exec(schemaContent || '')) !== null) {
+    out.set(`${m[1]}.${m[2]}`, `${m[3]}.${m[4]}`);
+  }
+  return out;
+};
+
+/** Parse `dc1=on,dc2=off` into datacenter / Region → PITR enabled. Accepts on/off, true/false, yes/no. */
+export const parsePitrOverrideCsv = (raw: string): Map<string, boolean> => {
+  const out = new Map<string, boolean>();
+  for (const part of (raw || '').split(',')) {
+    const seg = part.trim();
+    const eq = seg.indexOf('=');
+    if (eq <= 0) continue;
+    const dc = seg.slice(0, eq).trim();
+    const v = seg.slice(eq + 1).trim().toLowerCase();
+    if (['on', 'true', 'yes', '1'].includes(v)) out.set(dc, true);
+    else if (['off', 'false', 'no', '0'].includes(v)) out.set(dc, false);
+  }
+  return out;
+};
+
+/** Map nodetool status datacenter names to NetworkTopologyStrategy keys in DESCRIBE SCHEMA. */
+export const resolveStatusDcToSchemaDc = (statusDc: string, schemaDcKeys: string[]): string | null => {
+  if (schemaDcKeys.length === 0) return null;
+  if (schemaDcKeys.includes(statusDc)) return statusDc;
+  const lower = statusDc.toLowerCase();
+  const ci = schemaDcKeys.find((k) => k.toLowerCase() === lower);
+  if (ci) return ci;
+  // Only map a -seeds DC to another -seeds schema key (never to a base-region schema key).
+  const stripped = statusDc.replace(/-seeds$/i, '');
+  if (stripped !== statusDc) {
+    const byStrip = schemaDcKeys.find(
+      (k) => /-seeds$/i.test(k) && k.replace(/-seeds$/i, '') === stripped
+    );
+    if (byStrip) return byStrip;
+  }
+  return null;
+};
+
+export type InferReadsMode = 'same' | 'zero' | 'measured';
 
 export const parse_nodetool_tablestats = (content: string): TablestatsResult => {
   const lines = content.split('\n');
@@ -291,17 +443,21 @@ export const parse_cassandra_schema = (schemaContent: string, datacenter: string
  *   - CREATE FUNCTION     → keyspace-level (counted globally)
  *   - CREATE AGGREGATE    → keyspace-level (counted globally)
  */
-export const parse_cassandra_schema_compatibility = (schemaContent: string): CompatibilityInfo => {
+export const parse_cassandra_schema_compatibility = (schemaContent: string, rowSizeData?: RowSizeInfo): CompatibilityInfo => {
+  const MAX_ROW_SIZE_BYTES = 1024 * 1024; // 1 MB
+
   const result: CompatibilityInfo = {
     functions: 0,
     aggregates: 0,
     keyspaces: {},
+    udt_quotas: null,
+    row_size_issues: [],
   };
 
   const ensureTable = (ks: string, table: string): TableCompatibilityIssue => {
     if (!result.keyspaces[ks]) result.keyspaces[ks] = {};
     if (!result.keyspaces[ks][table]) {
-      result.keyspaces[ks][table] = { indexes: [], triggers: [], materializedViews: [] };
+      result.keyspaces[ks][table] = { indexes: [], triggers: [], materializedViews: [], shortColumnNames: [] };
     }
     return result.keyspaces[ks][table];
   };
@@ -328,6 +484,28 @@ export const parse_cassandra_schema_compatibility = (schemaContent: string): Com
     ensureTable(baseKs, baseTable).materializedViews.push(viewName);
   }
 
+  // Column names shorter than 2 characters are incompatible with Amazon Keyspaces
+  // (CloudFormation pattern: ^[a-zA-Z0-9][a-zA-Z0-9_]{1,47}$)
+  const tableColPattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)\s*\(([\s\S]*?)\)\s*(?:WITH|;)/gi;
+  let tcm: RegExpExecArray | null;
+  while ((tcm = tableColPattern.exec(schemaContent)) !== null) {
+    const ks = tcm[1];
+    const table = tcm[2];
+    const body = tcm[3];
+    const lines = body.split(',');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^\s*PRIMARY\s+KEY/i.test(trimmed)) continue;
+      const colMatch = trimmed.match(/^"?(\w+)"?\s+/);
+      if (colMatch) {
+        const colName = colMatch[1];
+        if (colName.length < 2) {
+          ensureTable(ks, table).shortColumnNames.push(colName);
+        }
+      }
+    }
+  }
+
   // CREATE [OR REPLACE] FUNCTION [IF NOT EXISTS] <ks>.<name> ...
   const functionPattern = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)/gi;
   while ((m = functionPattern.exec(schemaContent)) !== null) {
@@ -338,6 +516,197 @@ export const parse_cassandra_schema_compatibility = (schemaContent: string): Com
   const aggregatePattern = /CREATE\s+(?:OR\s+REPLACE\s+)?AGGREGATE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)/gi;
   while ((m = aggregatePattern.exec(schemaContent)) !== null) {
     result.aggregates++;
+  }
+
+  // --- UDT quota checks ---
+  const UDT_MAX_PER_REGION = 256;
+  const UDT_MAX_NESTING_DEPTH = 8;
+  const UDT_MAX_CHILD_UDTS = 10;
+  const UDT_MAX_PARENT_UDTS = 10;
+  const UDT_MAX_SCHEMA_SIZE_BYTES = 25 * 1024;
+  const UDT_MAX_NAME_LENGTH = 48;
+  const UDT_MAX_FIELD_NAME_LENGTH = 128;
+  const UDT_MAX_PER_TABLE = 50;
+
+  interface ParsedUdtInfo {
+    keyspace: string;
+    name: string;
+    fields: Array<{ name: string; type: string }>;
+    schemaSize: number;
+    childUdts: string[];
+  }
+
+  const udtPattern = /CREATE\s+TYPE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?\."?(\w+)"?\s*\(([\s\S]*?)\);/gi;
+  const allUdts: ParsedUdtInfo[] = [];
+  let um: RegExpExecArray | null;
+  while ((um = udtPattern.exec(schemaContent)) !== null) {
+    const ks = um[1];
+    const name = um[2];
+    const body = um[3];
+    const fields: Array<{ name: string; type: string }> = [];
+    const childUdts: string[] = [];
+
+    // Split on top-level commas (respecting angle brackets for nested types)
+    let depth = 0;
+    let current = '';
+    for (const ch of body) {
+      if (ch === '<' || ch === '(') depth++;
+      else if (ch === '>' || ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        const trimmed = current.trim();
+        if (trimmed) {
+          const spaceIdx = trimmed.indexOf(' ');
+          if (spaceIdx !== -1) {
+            fields.push({ name: trimmed.slice(0, spaceIdx).replace(/"/g, ''), type: trimmed.slice(spaceIdx + 1).trim() });
+          }
+        }
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    const lastTrimmed = current.trim();
+    if (lastTrimmed) {
+      const spaceIdx = lastTrimmed.indexOf(' ');
+      if (spaceIdx !== -1) {
+        fields.push({ name: lastTrimmed.slice(0, spaceIdx).replace(/"/g, ''), type: lastTrimmed.slice(spaceIdx + 1).trim() });
+      }
+    }
+
+    // Estimate schema size: Keyspaces internal representation uses approximately
+    // 185 bytes per field (includes binary type encoding, field name storage, and
+    // metadata overhead). Calibrated against known rejection at 140 fields.
+    const schemaSize = Math.max(body.length, fields.length * 185);
+
+    // Detect child UDT references (frozen<udt_name> or bare udt_name in field types)
+    const otherUdtNames = allUdts.filter((u) => u.keyspace === ks).map((u) => u.name);
+    for (const f of fields) {
+      for (const otherName of otherUdtNames) {
+        const re = new RegExp(`\\b${otherName}\\b`, 'i');
+        if (re.test(f.type) && !childUdts.includes(otherName)) {
+          childUdts.push(otherName);
+        }
+      }
+    }
+
+    allUdts.push({ keyspace: ks, name, fields, schemaSize, childUdts });
+  }
+
+  // Now check for parent references (reverse of child)
+  const parentCounts: Record<string, number> = {};
+  for (const udt of allUdts) {
+    const key = `${udt.keyspace}.${udt.name}`;
+    if (!parentCounts[key]) parentCounts[key] = 0;
+    for (const child of udt.childUdts) {
+      const childKey = `${udt.keyspace}.${child}`;
+      parentCounts[childKey] = (parentCounts[childKey] ?? 0) + 1;
+    }
+  }
+
+  // Calculate nesting depth via BFS
+  function calcNestingDepth(udt: ParsedUdtInfo): number {
+    const udtMap = new Map(allUdts.filter((u) => u.keyspace === udt.keyspace).map((u) => [u.name, u]));
+    let depth = 0;
+    let current = [udt.name];
+    const visited = new Set<string>();
+    while (current.length > 0) {
+      const next: string[] = [];
+      for (const name of current) {
+        if (visited.has(name)) continue;
+        visited.add(name);
+        const u = udtMap.get(name);
+        if (u) {
+          for (const child of u.childUdts) {
+            if (!visited.has(child)) next.push(child);
+          }
+        }
+      }
+      if (next.length > 0) depth++;
+      current = next;
+    }
+    return depth;
+  }
+
+  // Count UDTs referenced per table
+  const udtNamesSet = new Set(allUdts.map((u) => u.name.toLowerCase()));
+  const tableUdtPattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\.(\w+)\s*\(([\s\S]*?)\)\s*(?:WITH|;)/gi;
+  let tum: RegExpExecArray | null;
+  const tablesReferencingUdt: Record<string, number> = {}; // udt name → table count
+  while ((tum = tableUdtPattern.exec(schemaContent)) !== null) {
+    const tableKs = tum[1];
+    const tableName = tum[2];
+    const tableBody = tum[3];
+    const referencedUdts = new Set<string>();
+    for (const udtName of udtNamesSet) {
+      const re = new RegExp(`\\b${udtName}\\b`, 'i');
+      if (re.test(tableBody)) {
+        referencedUdts.add(udtName);
+        tablesReferencingUdt[udtName] = (tablesReferencingUdt[udtName] ?? 0) + 1;
+      }
+    }
+    if (referencedUdts.size > UDT_MAX_PER_TABLE) {
+      ensureTable(tableKs, tableName);
+    }
+  }
+
+  const udtIssues: UdtCompatibilityIssue[] = [];
+  for (const udt of allUdts) {
+    const issues: string[] = [];
+
+    if (udt.name.length > UDT_MAX_NAME_LENGTH) {
+      issues.push(`UDT name exceeds ${UDT_MAX_NAME_LENGTH} characters (${udt.name.length})`);
+    }
+
+    for (const f of udt.fields) {
+      if (f.name.length > UDT_MAX_FIELD_NAME_LENGTH) {
+        issues.push(`Field "${f.name}" exceeds ${UDT_MAX_FIELD_NAME_LENGTH} characters (${f.name.length})`);
+      }
+    }
+
+    if (udt.schemaSize > UDT_MAX_SCHEMA_SIZE_BYTES) {
+      issues.push(`UDT schema size likely exceeds 25 KB limit (estimated ${(udt.schemaSize / 1024).toFixed(1)} KB from ${udt.fields.length} fields)`);
+    }
+
+    if (udt.childUdts.length > UDT_MAX_CHILD_UDTS) {
+      issues.push(`Exceeds max ${UDT_MAX_CHILD_UDTS} direct child UDTs (${udt.childUdts.length})`);
+    }
+
+    const key = `${udt.keyspace}.${udt.name}`;
+    if ((parentCounts[key] ?? 0) > UDT_MAX_PARENT_UDTS) {
+      issues.push(`Exceeds max ${UDT_MAX_PARENT_UDTS} direct parent UDTs (${parentCounts[key]})`);
+    }
+
+    const depth = calcNestingDepth(udt);
+    if (depth > UDT_MAX_NESTING_DEPTH) {
+      issues.push(`Nesting depth exceeds ${UDT_MAX_NESTING_DEPTH} levels (${depth})`);
+    }
+
+    const tableRefCount = tablesReferencingUdt[udt.name.toLowerCase()] ?? 0;
+    if (tableRefCount > 100) {
+      issues.push(`Referenced by more than 100 tables (${tableRefCount})`);
+    }
+
+    if (issues.length > 0) {
+      udtIssues.push({ name: udt.name, keyspace: udt.keyspace, issues });
+    }
+  }
+
+  result.udt_quotas = {
+    total_udts: allUdts.length,
+    exceeds_region_limit: allUdts.length > UDT_MAX_PER_REGION,
+    issues: udtIssues,
+  };
+
+  // --- Max row size check (1 MB) using row size sampler data ---
+  if (rowSizeData) {
+    for (const [tableName, metrics] of Object.entries(rowSizeData)) {
+      const maxStr = metrics['max'] ?? metrics['maximum'];
+      if (!maxStr) continue;
+      const maxBytes = parseInt(maxStr, 10);
+      if (!isNaN(maxBytes) && maxBytes > MAX_ROW_SIZE_BYTES) {
+        result.row_size_issues.push({ table: tableName, max_bytes: maxBytes });
+      }
+    }
   }
 
   return result;
@@ -361,6 +730,23 @@ export const parse_cassandra_schema_compatibility = (schemaContent: string): Com
  *   - raw cqlsh output containing `{...}` lines mixed with header/footer
  *     noise (non-JSON lines are skipped).
  */
+/**
+ * Parse one prepared-statements NDJSON line. cqlsh doubles every backslash when it prints `SELECT JSON` text,
+ * so a quoted identifier ("C0") arrives as \\"C0\\" and the line isn't valid JSON. Retry with the doubling undone
+ * (an exact inverse), so captures made with older samplers still parse.
+ */
+export const parsePreparedStatementLine = (line: string): Record<string, unknown> | null => {
+  for (const candidate of [line, line.replace(/\\\\/g, '\\')]) {
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && typeof obj === 'object') return obj as Record<string, unknown>;
+    } catch {
+      /* try the next form */
+    }
+  }
+  return null;
+};
+
 export const parse_prepared_statements = (content: string): QueryPatternsInfo => {
   const result: QueryPatternsInfo = {
     lwt_in_unlogged_batch: [],
@@ -374,12 +760,10 @@ export const parse_prepared_statements = (content: string): QueryPatternsInfo =>
     const line = rawLine.trim();
     if (!line.startsWith('{') || !line.endsWith('}')) continue;
 
-    let stmt: { prepared_id?: string; query_string?: string; logged_keyspace?: string | null };
-    try {
-      stmt = JSON.parse(line);
-    } catch {
-      continue;
-    }
+    const stmt = parsePreparedStatementLine(line) as
+      | { prepared_id?: string; query_string?: string; logged_keyspace?: string | null }
+      | null;
+    if (!stmt) continue;
 
     const query = stmt.query_string ?? '';
     const preparedId = stmt.prepared_id ?? '';
@@ -519,12 +903,8 @@ export const isPreparedStatementsFile = (content: string): boolean => {
   for (const rawLine of content.split('\n')) {
     const line = rawLine.trim();
     if (!line.startsWith('{') || !line.endsWith('}')) continue;
-    try {
-      const obj = JSON.parse(line);
-      if (obj && typeof obj === 'object' && 'prepared_id' in obj && 'query_string' in obj) {
-        return true;
-      }
-    } catch { /* skip */ }
+    const obj = parsePreparedStatementLine(line);
+    if (obj && 'prepared_id' in obj && 'query_string' in obj) return true;
   }
   return false;
 };
@@ -563,6 +943,17 @@ export const scanCassandraFiles = (files: Record<string, string>): CassandraFile
       case 'tco':        result.tco     ??= name; break;
       case 'prepared':   result.prepared ??= name; break;
       default:           result.unknown.push(name); break;
+    }
+  }
+
+  // e.g. nodetool.txt with pasted `nodetool status` — content is status but filename not matched above
+  if (!result.status) {
+    for (const name of result.unknown) {
+      const c = files[name];
+      if (c && isStatusFile(c)) {
+        result.status = name;
+        break;
+      }
     }
   }
 

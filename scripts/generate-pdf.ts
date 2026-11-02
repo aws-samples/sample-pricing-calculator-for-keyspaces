@@ -131,6 +131,8 @@ interface ReportDataShape {
     regions: Estimate['regions'];
     estimateResults: Estimate['estimateResults'];
     pricing: Estimate['pricing'];
+    tco?: Estimate['tcoData'];
+    status_datacenter_count?: number;
 }
 
 interface RawCompatibility {
@@ -185,8 +187,9 @@ function extractEstimate(json: Record<string, unknown>, label: string): Estimate
         regions: reportData.regions,
         estimateResults: reportData.estimateResults,
         pricing: reportData.pricing,
-        tcoData: null,
+        tcoData: reportData.tco ?? null,
         compatibilityData: compatToReport(compat ?? null),
+        statusDcCount: reportData.status_datacenter_count,
     };
 }
 
@@ -217,8 +220,11 @@ function compatToReport(compat: RawCompatibility | null): CompatibilityData | nu
 // ---------------------------------------------------------------------------
 
 function resolveOutputPath(output: string | null): string {
-    if (!output) return path.join(process.cwd(), 'keyspaces-pricing-estimate.pdf');
-    return path.isAbsolute(output) ? output : path.join(process.cwd(), output);
+    const resolved = output
+        ? (path.isAbsolute(output) ? output : path.join(process.cwd(), output))
+        : path.join(process.cwd(), 'reports', 'keyspaces-pricing-estimate.pdf');
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    return resolved;
 }
 
 function main(): void {
@@ -272,6 +278,7 @@ function main(): void {
             e.pricing,
             e.tcoData ?? null,
             e.compatibilityData ?? null,
+            e.statusDcCount,
         );
     } else {
         report.createMultiReport(estimates);

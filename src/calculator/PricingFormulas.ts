@@ -1,6 +1,6 @@
 import pricingDataJson from './data/mcs.json';
-import { system_keyspaces, REPLICATION_FACTOR, SECONDS_PER_MONTH, GIGABYTE } from './Constants';
-import { HOURS_PER_MONTH } from './ParsingHelpers';
+import { system_keyspaces, REPLICATION_FACTOR, SECONDS_PER_MONTH, GIGABYTE, DEFAULT_TARGET_UTILIZATION } from './Constants';
+import { HOURS_PER_MONTH, resolveStatusDcToSchemaDc, type InferReadsMode } from './ParsingHelpers';
 import savingsPlansMap from './PricingData';
 
 // --- Type definitions ---
@@ -75,6 +75,8 @@ export interface KeyspaceAggregate {
   reads_per_second: number;
   ttls_per_second: number;
   use_backup?: boolean;
+  /** Rows returned per read request (range/partition reads); read units aggregate their bytes. Default 1. */
+  avg_rows_per_read?: number;
 }
 
 export type EstimateResults = Record<string, Record<string, KeyspaceAggregate>>;
@@ -173,6 +175,7 @@ interface McsRegionProducts {
 }
 
 interface McsPricingJson {
+  manifest?: { hawkFilePublicationDate?: string };
   regions?: Record<string, McsRegionProducts>;
 }
 
@@ -181,6 +184,9 @@ const pricingData = pricingDataJson as McsPricingJson;
 interface SavingsPlanRate {
   rate: number;
 }
+
+/** Publication date of the list prices in mcs.json (YYYY-MM-DD), for explanations and reports. */
+export const PRICE_LIST_DATE: string = (pricingData.manifest?.hawkFilePublicationDate ?? '').slice(0, 10) || 'unknown';
 type SavingsPlansMapType = Record<string, Record<string, SavingsPlanRate>>;
 const savingsPlanMap = savingsPlansMap as SavingsPlansMapType;
 
@@ -224,8 +230,18 @@ export const buildCassandraLocalSet = (
       const uptimeSeconds = infoData.uptime_seconds;
 
       for (const [keyspaceName, keyspaceData] of Object.entries(tablestatsData)) {
-        if (schema?.[keyspaceName] && !schema[keyspaceName].datacenters[dcName]) {
-          continue;
+        let replicationFactor = REPLICATION_FACTOR;
+        if (schema?.[keyspaceName]) {
+          const dcKeys = Object.keys(schema[keyspaceName].datacenters);
+          const schemaDc = resolveStatusDcToSchemaDc(dcName, dcKeys);
+          if (!schemaDc) {
+            continue;
+          }
+          const rf = schema[keyspaceName].datacenters[schemaDc];
+          if (rf === undefined || rf <= 0) {
+            continue;
+          }
+          replicationFactor = rf;
         }
 
         if (!result.data.keyspaces[keyspaceName]) {
@@ -233,11 +249,6 @@ export const buildCassandraLocalSet = (
             type: isSystemKeyspace(keyspaceName),
             dcs: {},
           };
-        }
-
-        let replicationFactor = REPLICATION_FACTOR;
-        if (schema?.[keyspaceName]) {
-          replicationFactor = schema[keyspaceName].datacenters[dcName];
         }
 
         if (!result.data.keyspaces[keyspaceName].dcs[dcName]) {
@@ -302,6 +313,108 @@ export const buildCassandraLocalSet = (
   return result;
 };
 
+/** How view writes are counted: the view's own tablestats counters, or the base table's (UNLOGGED BATCH). */
+export type ViewWriteMode = 'own' | 'unlogged-batch';
+
+/** How a materialized view was treated (keyspaces-pricing-rules.md, 4.6). */
+export interface MaterializedViewReport {
+  base: string;
+  priced: boolean;
+  /** Where the view's writes came from when priced. */
+  writes_source?: 'view tablestats' | 'base table (unlogged batch)';
+  /** Where the view's storage came from when priced. */
+  storage_source?: 'view tablestats' | 'base table (fallback)';
+  /** view row bytes ÷ base row bytes, applied to the fallback storage and to a derived view row size. */
+  row_size_ratio?: number;
+  row_size_ratio_source?: 'row-size samples' | 'schema column types' | 'none';
+  note?: string;
+}
+
+/**
+ * Materialized views aren't supported by Keyspaces; each view is carried over as a regular table. Mutates one sample:
+ *   - views not in `include` are removed from the tablestats (not priced)
+ *   - included views: reads = the view's own counters; storage = the view's own tablestats, else the base table's
+ *     scaled by (view row bytes ÷ base row bytes); a view without a row-size sample gets the base row size × that
+ *     ratio; TTL falls back to the base table's (the row-size sampler doesn't sample views). The ratio comes from
+ *     row-size samples of both, else `schemaRowRatios` (column-type estimate), else 1.
+ *   - writes: 'own' (default) = the view's own tablestats write counters (straight writes);
+ *     'unlogged-batch' = the base table's writes (view row written with the base row in an UNLOGGED BATCH)
+ */
+export const applyMaterializedViewPolicy = (
+  tablestats: Record<string, Record<string, { space_used: number; compression_ratio: number; read_count: number; write_count: number }>>,
+  views: Map<string, string>,
+  include: Set<string> | 'all',
+  writeMode: ViewWriteMode = 'own',
+  rowSizeData?: Record<string, Record<string, string>>,
+  preparedTtlTables?: Set<string>,
+  schemaRowRatios?: Map<string, number>
+): Record<string, MaterializedViewReport> => {
+  const report: Record<string, MaterializedViewReport> = {};
+  for (const [view, base] of Array.from(views.entries())) {
+    const [vks, vname] = view.split('.');
+    const [bks, bname] = base.split('.');
+    const wanted = include === 'all' || include.has(view);
+    if (!wanted) {
+      if (tablestats[vks]?.[vname]) delete tablestats[vks][vname];
+      report[view] = { base, priced: false };
+      continue;
+    }
+    const own = tablestats[vks]?.[vname];
+    const baseStats = tablestats[bks]?.[bname];
+    if (!baseStats) {
+      report[view] = own
+        ? { base, priced: true, writes_source: 'view tablestats', storage_source: 'view tablestats',
+            note: 'base table not in tablestats; view priced from its own counters' }
+        : { base, priced: false, note: 'neither the view nor its base table is in tablestats' };
+      continue;
+    }
+    const hasOwnStorage = !!own && Number(own.space_used) > 0;
+    // Without the view's own counters there are no straight writes to use, so base writes stand in.
+    const useBaseWrites = writeMode === 'unlogged-batch' || !own;
+
+    // view row bytes ÷ base row bytes: measured samples first, then the schema's column types, else 1.
+    const viewAvg = Number(rowSizeData?.[view]?.average);
+    const baseAvg = Number(rowSizeData?.[base]?.average);
+    let ratio = 1;
+    let ratioSource: MaterializedViewReport['row_size_ratio_source'] = 'none';
+    if (viewAvg > 0 && baseAvg > 0) {
+      ratio = viewAvg / baseAvg;
+      ratioSource = 'row-size samples';
+    } else if (schemaRowRatios?.has(view)) {
+      ratio = schemaRowRatios.get(view)!;
+      ratioSource = 'schema column types';
+    }
+
+    tablestats[vks] ??= {};
+    tablestats[vks][vname] = {
+      space_used: hasOwnStorage ? own.space_used : baseStats.space_used * ratio,
+      compression_ratio: hasOwnStorage ? own.compression_ratio : baseStats.compression_ratio,
+      read_count: own?.read_count ?? 0,
+      write_count: useBaseWrites ? baseStats.write_count : own.write_count,
+    };
+    const derivesRowSize = !!rowSizeData && !rowSizeData[view] && !!rowSizeData[base] && baseAvg > 0;
+    if (rowSizeData && !rowSizeData[view] && rowSizeData[base]) {
+      rowSizeData[view] = {
+        ...rowSizeData[base],
+        ...(baseAvg > 0 ? { average: String(Math.max(1, Math.round(baseAvg * ratio))) } : {}),
+      };
+    }
+    if (preparedTtlTables?.has(base.toLowerCase())) preparedTtlTables.add(view.toLowerCase());
+    report[view] = {
+      base,
+      priced: true,
+      writes_source: useBaseWrites ? 'base table (unlogged batch)' : 'view tablestats',
+      storage_source: hasOwnStorage ? 'view tablestats' : 'base table (fallback)',
+      // Report the ratio only where it was applied: fallback storage or a derived view row size.
+      ...(!hasOwnStorage || derivesRowSize
+        ? { row_size_ratio: Math.round(ratio * 10000) / 10000, row_size_ratio_source: ratioSource }
+        : {}),
+      ...(!own ? { note: 'view not in tablestats; base table writes and size used' } : {}),
+    };
+  }
+  return report;
+};
+
 /**
  * Aggregate table-level metrics to keyspace-level for a specific datacenter.
  */
@@ -358,6 +471,141 @@ export const getKeyspaceCassandraAggregate = (
   return keyspace_aggregate;
 };
 
+/** Deep-copy keyspace aggregates (used when fanning out shared-bundle results per DC). */
+export const cloneKeyspaceAggregates = (
+  aggregates: Record<string, KeyspaceAggregate>
+): Record<string, KeyspaceAggregate> =>
+  Object.fromEntries(
+    Object.entries(aggregates).map(([k, v]) => [k, { ...v }])
+  );
+
+/**
+ * Multiply billable workload metrics by `factor` (e.g. datacenter count for a single diagnostic bundle).
+ * Row-size averages are unchanged — they describe payload shape, not billable quantity.
+ */
+export const scaleKeyspaceAggregates = (
+  aggregates: Record<string, KeyspaceAggregate>,
+  factor: number
+): Record<string, KeyspaceAggregate> => {
+  if (!Number.isFinite(factor) || factor === 1) {
+    return cloneKeyspaceAggregates(aggregates);
+  }
+  const out: Record<string, KeyspaceAggregate> = {};
+  for (const [ks, agg] of Object.entries(aggregates)) {
+    out[ks] = {
+      ...agg,
+      total_live_space_gb: (agg.total_live_space_gb ?? 0) * factor,
+      uncompressed_single_replica_gb: agg.uncompressed_single_replica_gb * factor,
+      writes_per_second: agg.writes_per_second * factor,
+      reads_per_second: agg.reads_per_second * factor,
+      ttls_per_second: agg.ttls_per_second * factor,
+    };
+  }
+  return out;
+};
+
+export const applyUseBackupToAggregates = (
+  aggregates: Record<string, KeyspaceAggregate>,
+  use_backup: boolean
+): void => {
+  for (const agg of Object.values(aggregates)) {
+    agg.use_backup = use_backup;
+  }
+};
+
+/**
+ * For each DC in `overrides`, scale keyspace read rates proportionally so their sum matches the target reads/s.
+ */
+export const applyPerDcReadOverridesToEstimateResults = (
+  estimateResults: EstimateResults,
+  overrides: Map<string, number>
+): void => {
+  Array.from(overrides.entries()).forEach(([dc, targetReads]) => {
+    const aggs = estimateResults[dc];
+    if (!aggs) return;
+
+    let sum = 0;
+    for (const a of Object.values(aggs)) {
+      if (a.keyspace_type === 'user') sum += a.reads_per_second;
+    }
+    if (targetReads === 0) {
+      for (const a of Object.values(aggs)) {
+        if (a.keyspace_type === 'user') a.reads_per_second = 0;
+      }
+      return;
+    }
+    if (sum <= 0) {
+      const userKs = Object.values(aggs).filter((a) => a.keyspace_type === 'user');
+      if (userKs.length === 1) {
+        userKs[0].reads_per_second = targetReads;
+      } else if (userKs.length > 1) {
+        const share = targetReads / userKs.length;
+        for (const a of userKs) a.reads_per_second = share;
+      }
+      return;
+    }
+    const ratio = targetReads / sum;
+    for (const a of Object.values(aggs)) {
+      if (a.keyspace_type === 'user') a.reads_per_second *= ratio;
+    }
+  });
+};
+
+/** Drop keyspaces from a DC estimate when NTS has no replica on that DC; sync replication_factor. */
+export const filterEstimateResultsBySchemaReplication = (
+  estimateResults: EstimateResults,
+  schema: Record<string, { datacenters: Record<string, number> }> | null | undefined,
+  statusDatacenters: string[]
+): void => {
+  if (!schema) return;
+  for (const dc of statusDatacenters) {
+    const aggs = estimateResults[dc];
+    if (!aggs) continue;
+    for (const ks of Object.keys(aggs)) {
+      const entry = schema[ks];
+      if (!entry) continue;
+      const schemaDc = resolveStatusDcToSchemaDc(dc, Object.keys(entry.datacenters));
+      const rf = schemaDc ? entry.datacenters[schemaDc] : undefined;
+      if (rf === undefined || rf <= 0) {
+        delete aggs[ks];
+      } else {
+        aggs[ks].replication_factor = rf;
+      }
+    }
+  }
+};
+
+/**
+ * `parse-cassandra.ts` defaults to **`zero`**: DCs with no `--info` capture get 0 reads.
+ * **`same`**: skip adjustment (cloned read rates apply to every DC).
+ * **`zero`**: zero reads on DCs without a matching `--info` file.
+ * **`measured`** + shared bundle: only `representativeDc` retains reads unless overridden.
+ */
+export const applyInferReadsModeToEstimateResults = (
+  estimateResults: EstimateResults,
+  mode: InferReadsMode,
+  opts: { dcsWithInfoFiles: Set<string>; representativeDc: string | null; bundleShared: boolean }
+): void => {
+  if (mode === 'same') return;
+  for (const dc of Object.keys(estimateResults)) {
+    let zeroReads = false;
+    if (mode === 'zero') {
+      zeroReads = !opts.dcsWithInfoFiles.has(dc);
+    } else if (mode === 'measured') {
+      if (opts.bundleShared && opts.representativeDc) {
+        zeroReads = dc !== opts.representativeDc;
+      } else {
+        zeroReads = !opts.dcsWithInfoFiles.has(dc);
+      }
+    }
+    if (!zeroReads) continue;
+    const aggs = estimateResults[dc];
+    for (const agg of Object.values(aggs)) {
+      if (agg.keyspace_type === 'user') agg.reads_per_second = 0;
+    }
+  }
+};
+
 /**
  * Compute per-datacenter and total monthly costs from keyspace aggregates.
  */
@@ -412,24 +660,25 @@ export const calculatePricingEstimate = (
       const writePrice = regionPricing.writeRequestPrice;
       const readPrice = regionPricing.readRequestPrice;
       const oneDemandWriteCost = calculateOnDemandWriteUnitsPerMonthCost(data.writes_per_second, data.avg_write_row_size_bytes, writePrice);
-      const oneDemandReadCost = calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, readPrice);
+      const rowsPerRead = data.avg_rows_per_read ?? 1;
+      const oneDemandReadCost = calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, readPrice, rowsPerRead);
       const ttlDeleteCost = calculateTtlUnitsPerMonthCost(data.ttls_per_second, data.avg_write_row_size_bytes, regionPricing.ttlDeletesPrice);
 
       const oneDemandWriteCostWithSavings = savingsPlan
         ? calculateOnDemandWriteUnitsPerMonthCost(data.writes_per_second, data.avg_write_row_size_bytes, savingsPlan['WriteRequestUnits']?.rate ?? writePrice)
         : oneDemandWriteCost;
       const oneDemandReadCostWithSavings = savingsPlan
-        ? calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadRequestUnits']?.rate ?? readPrice)
+        ? calculateOnDemandReadUnitsPerMonthCost(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadRequestUnits']?.rate ?? readPrice, rowsPerRead)
         : oneDemandReadCost;
       const provisionedWriteCostWithSavings = savingsPlan
-        ? calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, savingsPlan['WriteCapacityUnitHrs']?.rate ?? regionPricing.writeRequestPricePerHour, 0.70)
+        ? calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, savingsPlan['WriteCapacityUnitHrs']?.rate ?? regionPricing.writeRequestPricePerHour, DEFAULT_TARGET_UTILIZATION)
         : 0;
       const provisionedReadCostWithSavings = savingsPlan
-        ? calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadCapacityUnitHrs']?.rate ?? regionPricing.readRequestPricePerHour, 0.70)
+        ? calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, savingsPlan['ReadCapacityUnitHrs']?.rate ?? regionPricing.readRequestPricePerHour, DEFAULT_TARGET_UTILIZATION, rowsPerRead)
         : 0;
 
-      const provisionedWriteCost = calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing.writeRequestPricePerHour, 0.70);
-      const provisionedReadCost = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing.readRequestPricePerHour, 0.70);
+      const provisionedWriteCost = calculateProvisionedWriteCostPerMonth(data.writes_per_second, data.avg_write_row_size_bytes, regionPricing.writeRequestPricePerHour, DEFAULT_TARGET_UTILIZATION);
+      const provisionedReadCost = calculateProvisionedReadCostPerMonth(data.reads_per_second, data.avg_read_row_size_bytes, regionPricing.readRequestPricePerHour, DEFAULT_TARGET_UTILIZATION, rowsPerRead);
 
       const storageCost = calculateStorageCostPerMonth(data.uncompressed_single_replica_gb, regionPricing.storagePricePerGB);
       const backupCost = data.use_backup === true
@@ -679,15 +928,16 @@ export const calculateProvisionedReadCostPerMonth = (
   reads_per_second: number,
   avg_read_row_size_bytes: number,
   readRequestPricePerHour: number,
-  target_utilization: number
+  target_utilization = DEFAULT_TARGET_UTILIZATION,
+  rows_per_read = 1
 ): number =>
-  (reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes) * HOURS_PER_MONTH * readRequestPricePerHour) / target_utilization;
+  (reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes, rows_per_read) * HOURS_PER_MONTH * readRequestPricePerHour) / target_utilization;
 
 export const calculateProvisionedWriteCostPerMonth = (
   writes_per_second: number,
   avg_write_row_size_bytes: number,
   writeRequestPricePerHour: number,
-  target_utilization = 0.7
+  target_utilization = DEFAULT_TARGET_UTILIZATION
 ): number =>
   (writes_per_second * calculateWriteUnitsPerOperation(avg_write_row_size_bytes) * HOURS_PER_MONTH * writeRequestPricePerHour) / target_utilization;
 
@@ -700,9 +950,10 @@ export const calculateBackupCostPerMonth = (uncompressed_single_replica_gb: numb
 export const calculateOnDemandReadUnitsPerMonthCost = (
   reads_per_second: number,
   avg_read_row_size_bytes: number,
-  onDemandReadPrice: number
+  onDemandReadPrice: number,
+  rows_per_read = 1
 ): number =>
-  calcualteOnDemandReadUnitsPerMonth(reads_per_second, avg_read_row_size_bytes) * onDemandReadPrice;
+  calcualteOnDemandReadUnitsPerMonth(reads_per_second, avg_read_row_size_bytes, rows_per_read) * onDemandReadPrice;
 
 export const calculateOnDemandWriteUnitsPerMonthCost = (
   writes_per_second: number,
@@ -718,8 +969,12 @@ export const calculateTtlUnitsPerMonthCost = (
 ): number =>
   calculateOnDemandTtlUnitsPerMonth(ttls_per_second, avg_write_row_size_bytes) * ttlDeletesPrice;
 
-export const calcualteOnDemandReadUnitsPerMonth = (reads_per_second: number, avg_read_row_size_bytes: number): number =>
-  reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes) * SECONDS_PER_MONTH;
+export const calcualteOnDemandReadUnitsPerMonth = (
+  reads_per_second: number,
+  avg_read_row_size_bytes: number,
+  rows_per_read = 1
+): number =>
+  reads_per_second * calculateReadUnitsPerOperation(avg_read_row_size_bytes, rows_per_read) * SECONDS_PER_MONTH;
 
 export const calculateOnDemandWriteUnitsPerMonth = (writes_per_second: number, avg_write_row_size_bytes: number): number =>
   writes_per_second * calculateWriteUnitsPerOperation(avg_write_row_size_bytes) * SECONDS_PER_MONTH;
@@ -730,10 +985,121 @@ export const calculateOnDemandTtlUnitsPerMonth = (ttls_per_second: number, avg_w
 export const calculateWriteUnitsPerOperation = (avg_write_row_size_bytes: number): number =>
   Math.ceil(avg_write_row_size_bytes / 1024);
 
-export const calculateReadUnitsPerOperation = (avg_read_row_size_bytes: number): number =>
-  Math.ceil(avg_read_row_size_bytes / 4096);
+/** Largest result one read page returns; bigger reads span several pages. */
+export const READ_PAGE_SIZE_BYTES = 1024 * 1024;
+
+/**
+ * Read request units for one read. A read is billed on the bytes it returns, aggregated across all rows
+ * it reads (not per row): each page (up to READ_PAGE_SIZE_BYTES) is ceil(page_bytes / 4 KB) units.
+ */
+export const calculateReadUnitsPerOperation = (avg_read_row_size_bytes: number, rows_per_read = 1): number => {
+  const rows = Number.isFinite(rows_per_read) && rows_per_read > 0 ? rows_per_read : 1;
+  const bytes = avg_read_row_size_bytes * rows;
+  const fullPages = Math.floor(bytes / READ_PAGE_SIZE_BYTES);
+  const remainder = bytes - fullPages * READ_PAGE_SIZE_BYTES;
+  return fullPages * Math.ceil(READ_PAGE_SIZE_BYTES / 4096) + Math.ceil(remainder / 4096);
+};
 
 export const calculateTtlUnitsPerOperation = (avg_write_row_size_bytes: number): number =>
   Math.ceil(avg_write_row_size_bytes / 1024);
+
+// --- Formula explanations ---
+
+const fmtNum = (n: number): string =>
+  Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+const fmtPrice = (n: number | string): string =>
+  `$${Number(n).toLocaleString('en-US', { maximumSignificantDigits: 10 })}`;
+const fmtUsd = (n: number): string =>
+  `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** "ceil(...) = N" for one read, including the 1 MB page split when the read spans several pages. */
+const explainReadUnits = (rowBytes: number, rowsPerRead: number): string => {
+  const units = calculateReadUnitsPerOperation(rowBytes, rowsPerRead);
+  const bytes = rowBytes * rowsPerRead;
+  const bytesExpr = rowsPerRead === 1 ? fmtNum(rowBytes) : `${fmtNum(rowBytes)} × ${fmtNum(rowsPerRead)} rows`;
+  const fullPages = Math.floor(bytes / READ_PAGE_SIZE_BYTES);
+  if (fullPages === 0) return `ceil(${bytesExpr} / 4,096) = ${fmtNum(units)}`;
+  const remainder = bytes - fullPages * READ_PAGE_SIZE_BYTES;
+  return (
+    `${bytesExpr} = ${fmtNum(bytes)} bytes → ${fmtNum(fullPages)} full 1 MB page(s) × 256 + ` +
+    `ceil(${fmtNum(remainder)} / 4,096) = ${fmtNum(units)}`
+  );
+};
+
+/**
+ * Write out every pricing formula with the estimate's own numbers substituted, per datacenter and keyspace.
+ * Values come from the same functions calculatePricingEstimate uses, so the lines add up to its totals.
+ */
+export const explainPricingEstimate = (
+  datacenters: DatacenterRef[],
+  regions: Record<string, string>,
+  estimateResults: EstimateResults
+): Record<string, Record<string, string[]>> => {
+  const out: Record<string, Record<string, string[]>> = {};
+  for (const dc of datacenters) {
+    const region = regions[dc.name];
+    const results = estimateResults[dc.name];
+    const p = region ? getRegionPricing(region) : null;
+    if (!results || !p) continue;
+    const sp = savingsPlanMap[region];
+    out[dc.name] = {};
+
+    for (const [keyspace, d] of Object.entries(results)) {
+      const rows = d.avg_rows_per_read ?? 1;
+      const ru = calculateReadUnitsPerOperation(d.avg_read_row_size_bytes, rows);
+      const wu = calculateWriteUnitsPerOperation(d.avg_write_row_size_bytes);
+      const tu = calculateTtlUnitsPerOperation(d.avg_write_row_size_bytes);
+      const gb = d.uncompressed_single_replica_gb;
+
+      const odR = calculateOnDemandReadUnitsPerMonthCost(d.reads_per_second, d.avg_read_row_size_bytes, p.readRequestPrice, rows);
+      const odW = calculateOnDemandWriteUnitsPerMonthCost(d.writes_per_second, d.avg_write_row_size_bytes, p.writeRequestPrice);
+      const pvR = calculateProvisionedReadCostPerMonth(d.reads_per_second, d.avg_read_row_size_bytes, p.readRequestPricePerHour, DEFAULT_TARGET_UTILIZATION, rows);
+      const pvW = calculateProvisionedWriteCostPerMonth(d.writes_per_second, d.avg_write_row_size_bytes, p.writeRequestPricePerHour, DEFAULT_TARGET_UTILIZATION);
+      const ttl = calculateTtlUnitsPerMonthCost(d.ttls_per_second, d.avg_write_row_size_bytes, p.ttlDeletesPrice);
+      const storage = calculateStorageCostPerMonth(gb, p.storagePricePerGB);
+      const backup = d.use_backup === true ? calculateBackupCostPerMonth(gb, p.pitrPricePerGB) : 0;
+      const shared = ttl + storage + backup;
+
+      const lines: string[] = [
+        `Region: ${region} (list prices from mcs.json, published ${PRICE_LIST_DATE})`,
+        `Workload: ${fmtNum(d.reads_per_second)} reads/s, ${fmtNum(d.writes_per_second)} writes/s, ` +
+          `${fmtNum(d.ttls_per_second)} TTL deletes/s, ${fmtNum(d.avg_read_row_size_bytes)} B rows, ` +
+          `${fmtNum(rows)} row(s) per read, ${fmtNum(gb)} GB, PITR ${d.use_backup ? 'on' : 'off'}`,
+        `Write units per write = ceil(${fmtNum(d.avg_write_row_size_bytes)} / 1,024) = ${fmtNum(wu)}`,
+        `Read units per read = ${explainReadUnits(d.avg_read_row_size_bytes, rows)}`,
+        `On-demand reads = ${fmtNum(d.reads_per_second)} × ${fmtNum(ru)} × 2,628,000 s × ${fmtPrice(p.readRequestPrice)} = ${fmtUsd(odR)}`,
+        `On-demand writes = ${fmtNum(d.writes_per_second)} × ${fmtNum(wu)} × 2,628,000 s × ${fmtPrice(p.writeRequestPrice)} = ${fmtUsd(odW)}`,
+        `Provisioned reads = ${fmtNum(d.reads_per_second)} × ${fmtNum(ru)} × 730 h × ${fmtPrice(p.readRequestPricePerHour)} ÷ ${DEFAULT_TARGET_UTILIZATION.toFixed(2)} target utilization = ${fmtUsd(pvR)}`,
+        `Provisioned writes = ${fmtNum(d.writes_per_second)} × ${fmtNum(wu)} × 730 h × ${fmtPrice(p.writeRequestPricePerHour)} ÷ ${DEFAULT_TARGET_UTILIZATION.toFixed(2)} target utilization = ${fmtUsd(pvW)}`,
+        `TTL deletes = ${fmtNum(d.ttls_per_second)} × ${fmtNum(tu)} × 2,628,000 s × ${fmtPrice(p.ttlDeletesPrice)} = ${fmtUsd(ttl)}`,
+        `Storage = ${fmtNum(gb)} GB × ${fmtPrice(p.storagePricePerGB)} = ${fmtUsd(storage)}`,
+        d.use_backup === true
+          ? `PITR = ${fmtNum(gb)} GB × ${fmtPrice(p.pitrPricePerGB)} = ${fmtUsd(backup)}`
+          : 'PITR = off = $0.00',
+        `On-demand total = ${fmtUsd(odR)} + ${fmtUsd(odW)} + ${fmtUsd(ttl)} + ${fmtUsd(storage)} + ${fmtUsd(backup)} = ${fmtUsd(odR + odW + shared)}`,
+        `Provisioned total = ${fmtUsd(pvR)} + ${fmtUsd(pvW)} + ${fmtUsd(ttl)} + ${fmtUsd(storage)} + ${fmtUsd(backup)} = ${fmtUsd(pvR + pvW + shared)}`,
+      ];
+
+      if (sp) {
+        const odRate = (k: string, list: number) => sp[k]?.rate ?? list;
+        const odRs = calculateOnDemandReadUnitsPerMonthCost(d.reads_per_second, d.avg_read_row_size_bytes, odRate('ReadRequestUnits', p.readRequestPrice), rows);
+        const odWs = calculateOnDemandWriteUnitsPerMonthCost(d.writes_per_second, d.avg_write_row_size_bytes, odRate('WriteRequestUnits', p.writeRequestPrice));
+        const pvRs = calculateProvisionedReadCostPerMonth(d.reads_per_second, d.avg_read_row_size_bytes, odRate('ReadCapacityUnitHrs', p.readRequestPricePerHour), DEFAULT_TARGET_UTILIZATION, rows);
+        const pvWs = calculateProvisionedWriteCostPerMonth(d.writes_per_second, d.avg_write_row_size_bytes, odRate('WriteCapacityUnitHrs', p.writeRequestPricePerHour), DEFAULT_TARGET_UTILIZATION);
+        lines.push(
+          `Savings plan: 1-year No Upfront Database Savings Plan rates from savings-plans.json`,
+          `On-demand + savings plan = reads ${fmtUsd(odRs)} (rate ${fmtPrice(odRate('ReadRequestUnits', p.readRequestPrice))}) + ` +
+            `writes ${fmtUsd(odWs)} (rate ${fmtPrice(odRate('WriteRequestUnits', p.writeRequestPrice))}) + TTL, storage, PITR at list price = ${fmtUsd(odRs + odWs + shared)}`,
+          `Provisioned + savings plan = reads ${fmtUsd(pvRs)} (rate ${fmtPrice(odRate('ReadCapacityUnitHrs', p.readRequestPricePerHour))}) + ` +
+            `writes ${fmtUsd(pvWs)} (rate ${fmtPrice(odRate('WriteCapacityUnitHrs', p.writeRequestPricePerHour))}) + TTL, storage, PITR at list price = ${fmtUsd(pvRs + pvWs + shared)}`
+        );
+      } else {
+        lines.push('Savings plans: no savings-plan rates for this Region.');
+      }
+      out[dc.name][keyspace] = lines;
+    }
+  }
+  return out;
+};
 
 export default calculatePricingEstimate;
