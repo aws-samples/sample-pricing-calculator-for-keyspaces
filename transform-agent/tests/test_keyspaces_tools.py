@@ -592,6 +592,19 @@ def test_per_dc_samples_keep_their_own_reads(tools):
     assert by_dc["dc-eu"]["writes_per_second"] == by_dc["us-east-1"]["writes_per_second"]
 
 
+def test_prepare_artifact_upload_digest(tools):
+    import base64, hashlib
+    path = tools.save_input_file(file_name="out/report.pdf", content="%PDF-1.4 test")["path"]
+    res = tools.prepare_artifact_upload(path=path)
+    assert "error" not in res, res
+    assert res["content_digest"] == base64.b64encode(hashlib.sha256(b"%PDF-1.4 test").digest()).decode()
+    assert res["file_type"] == "PDF" and res["bytes"] == 13
+    yaml = tools.save_input_file(file_name="out/keyspaces.yaml", content="Resources: {}")["path"]
+    assert tools.prepare_artifact_upload(path=yaml)["file_type"] == "TXT"
+    from agent_builder_agentic_mcp.datamodels import is_valid_checksum
+    assert is_valid_checksum(res["content_digest"])
+
+
 def test_sampler_download(tools):
     res = tools.prepare_sampler_download()
     assert "error" not in res, res

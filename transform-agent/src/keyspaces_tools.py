@@ -12,6 +12,8 @@ paths to these tools. Generated PDFs / templates are written to the work dir and
 can be uploaded back as CUSTOMER_OUTPUT artifacts.
 """
 
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -258,6 +260,40 @@ def extract_diagnostics_zip(zip_path: str, cluster_name: str, datacenter: Option
         }
     except zipfile.BadZipFile:
         return {"error": "The file is not a valid zip archive."}
+    except Exception as e:
+        return _error(e)
+
+
+_ARTIFACT_FILE_TYPES = {
+    ".pdf": "PDF", ".json": "JSON", ".zip": "ZIP", ".html": "HTML", ".md": "MARKDOWN",
+    ".csv": "CSV", ".xlsx": "XLSX", ".pptx": "PPTX",
+}
+
+
+@tool
+def prepare_artifact_upload(path: str) -> dict[str, Any]:
+    """Compute what create_artifact_upload_url needs for a file you want to deliver as a job artifact: the
+    base64-encoded SHA-256 `content_digest` (never guess or hand-compute it) and the artifact `fileType`.
+    Call this for every output (PDF report, CloudFormation template, JSON) right before
+    create_artifact_upload_url, then upload_artifact with the same path, then complete_artifact_upload.
+
+    Args:
+        path: File in the Keyspaces work directory (as returned by the other tools).
+
+    Returns:
+        {"path", "content_digest", "file_type", "bytes", "file_name"}
+    """
+    try:
+        target = Path(_resolve(path))
+        digest = base64.b64encode(hashlib.sha256(target.read_bytes()).digest()).decode("ascii")
+        return {
+            "path": str(target),
+            "content_digest": digest,
+            # CloudFormation YAML and anything else without a dedicated type is uploaded as TXT.
+            "file_type": _ARTIFACT_FILE_TYPES.get(target.suffix.lower(), "TXT"),
+            "bytes": target.stat().st_size,
+            "file_name": target.name,
+        }
     except Exception as e:
         return _error(e)
 
@@ -842,6 +878,7 @@ KEYSPACES_TOOLS = [
     check_cluster_collection,
     extract_diagnostics_zip,
     prepare_sampler_download,
+    prepare_artifact_upload,
     read_skill_reference,
     estimate_keyspaces_cost,
     estimate_from_workload_spec,

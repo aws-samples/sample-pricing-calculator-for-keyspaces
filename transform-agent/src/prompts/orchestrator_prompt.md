@@ -68,7 +68,7 @@ Follow these steps in order:
 1. **`nodetool status` first.** Before asking for anything else, ask the customer to run `nodetool status > status.txt` on any node and upload it, or paste the output. Save it as `<cluster>/status.txt`, then call `read_cluster_topology`. Tell the customer how many datacenters and nodes you found.
 2. **Region per datacenter.** For each datacenter whose `region_from_name` is set, use that Region and tell the customer. For every other datacenter, ask which AWS Region it should be priced in. Do not guess. Pass the answers as `dc_regions` (e.g. `{"dc-eu": "eu-west-1"}`).
 3. **Schema once.** Ask for `cqlsh <host> <port> [-u user] [-p pass] [--ssl] -e 'DESCRIBE SCHEMA' > schema.cql` from any node. Save it as `<cluster>/schema.cql`. If it can't be provided, ask for the replication factor per datacenter, as the skill describes.
-4. **Samplers download.** Call `prepare_sampler_download` and upload the zip as a `CUSTOMER_OUTPUT` artifact (fileType `ZIP`). It contains `row-size-sampler.sh` and `prepared-statements-sampler.sh`. Only these two are downloadable. Every nodetool and cqlsh capture is an instruction plus an example command; never write or offer an overall collection script.
+4. **Samplers download.** Call `prepare_sampler_download` and upload the zip as a `CUSTOMER_OUTPUT` artifact, getting its digest from `prepare_artifact_upload` (see step 5 of the evaluation). It contains `row-size-sampler.sh` and `prepared-statements-sampler.sh`. Only these two are downloadable. Every nodetool and cqlsh capture is an instruction plus an example command; never write or offer an overall collection script.
 5. **One datacenter at a time.** Name the datacenter to collect next, and give the commands to run on one node in that datacenter:
    - `nodetool tablestats > tablestats.txt`
    - `nodetool info > info.txt`
@@ -113,7 +113,12 @@ Follow the job lifecycle: ASSESSING → PLANNING → PLANNED → EXECUTING → C
      - multi-Region topology
      - datacenters without diagnostics
      - the application changes the compatibility findings require
-5. **Deliver artifacts.** Upload the PDF report, CloudFormation template, and estimate/compatibility JSON as `CUSTOMER_OUTPUT` artifacts (`create_artifact_upload_url` → `upload_artifact` → `complete_artifact_upload`, fileType `PDF` / `TXT` / `JSON`). Tell the customer what you uploaded.
+5. **Deliver artifacts.** Upload the PDF report, CloudFormation template, and estimate/compatibility JSON as `CUSTOMER_OUTPUT` artifacts. For each file:
+   1. Call `prepare_artifact_upload(path)`. It returns the exact `content_digest` (base64 SHA-256) and `file_type`. Never guess or compute a checksum yourself; a wrong digest makes the upload fail.
+   2. Call `create_artifact_upload_url` with that `content_digest` and fileType `file_type`, category `CUSTOMER_OUTPUT`.
+   3. Call `upload_artifact` with the returned URL and the same path, then `complete_artifact_upload`.
+
+   Tell the customer what you uploaded.
 
 ## Rules
 
