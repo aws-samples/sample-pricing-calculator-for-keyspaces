@@ -34,6 +34,7 @@
       "webAppV2": true,
       "legacyRestartable": false,
       "chatFileUpload": true,
+      "allowChatWhenJobTerminated": false,
       "extensions": [
         {
           "name": "Agent Provider",

@@ -113,28 +113,3 @@ Outputs:
     Value: !GetAtt AWSTransformAgentInvokeRole.Arn
     Export:
       Name: AWSTransform-AWSTransformAgentInvokeRoleArn
-```
-```yaml
-AssumeRolePolicyDocument:
-  Version: "2012-10-17"
-  Statement:
-    - Effect: Allow
-      Principal:
-        Service:
-          - prod.us-east-1.compute.elastic-gumby.aws.internal
-      Action: sts:AssumeRole
-```
-```yaml
-- Sid: BedrockInvoke
-  Effect: Allow
-  Action:
-    - bedrock:InvokeModel
-    - bedrock:InvokeModelWithResponseStream
-    - bedrock-runtime:Converse
-    - bedrock-runtime:InvokeModel
-  Resource: "*"
-- Sid: TransformAgentsApiPolicy
-  Effect: Allow
-  Action:
-    - transform-agents:*
-  Resource: "*"
