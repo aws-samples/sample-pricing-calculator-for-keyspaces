@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
-import { UserOptions, Table } from 'jspdf-autotable';
+import { applyPlugin, UserOptions, Table } from 'jspdf-autotable';
+
+// jspdf-autotable 5 no longer patches jsPDF on import; this adds doc.autoTable / doc.lastAutoTable.
+applyPlugin(jsPDF);
 
 declare module 'jspdf' {
     interface jsPDF {
